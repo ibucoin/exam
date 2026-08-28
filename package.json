@@ -1,0 +1,30 @@
+{
+  "name": "exam-review",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run scripts/dev.ts",
+    "dev:client": "vite",
+    "dev:server": "bun --hot server/index.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p server/tsconfig.json",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.102.8",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.13.5",
+    "lucide-react": "^1.35.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@vitejs/plugin-react": "^6.1.1",
+    "bun-types": "^1.4.0",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  }
+}
