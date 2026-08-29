@@ -11,13 +11,26 @@ await copyFile(sourcePath, targetPath);
 
 const database = new Database(targetPath);
 database.exec("PRAGMA foreign_keys = ON");
-database.transaction(() => {
-  database.exec("DELETE FROM users");
+const tables = new Set(
   database
-    .query(
-      "DELETE FROM sqlite_sequence WHERE name IN ('users', 'attempts', 'validation_rounds', 'validation_round_items', 'fsrs_review_logs')",
+    .query<{ name: string }, []>(
+      "SELECT name FROM sqlite_master WHERE type = 'table'",
     )
-    .run();
+    .all()
+    .map(({ name }) => name),
+);
+
+database.transaction(() => {
+  if (tables.has("users")) {
+    database.exec("DELETE FROM users");
+  }
+  if (tables.has("sqlite_sequence")) {
+    database
+      .query(
+        "DELETE FROM sqlite_sequence WHERE name IN ('users', 'attempts', 'validation_rounds', 'validation_round_items', 'fsrs_review_logs')",
+      )
+      .run();
+  }
 })();
 database.exec("VACUUM");
 database.close();
