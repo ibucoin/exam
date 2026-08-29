@@ -888,29 +888,32 @@ study.patch("/progress", async (c) => {
   return c.body(null, 204);
 });
 
-interface StatsRow {
-  total: number;
-  answered: number;
-  firstCorrect: number;
-  mastered: number;
-  unmastered: number;
-  favorites: number;
-}
-
 async function scopeStats(userId: number, scope: QuestionScope): Promise<ScopeStats> {
-  const row = await db.get<StatsRow>(sql`
-    SELECT
-      COUNT(q.id) AS total,
-      COUNT(qs.question_id) AS answered,
-      COALESCE(SUM(CASE WHEN qs.first_attempt_correct = 1 THEN 1 ELSE 0 END), 0) AS firstCorrect,
-      COALESCE(SUM(CASE WHEN qs.mastered = 1 THEN 1 ELSE 0 END), 0) AS mastered,
-      COALESCE(SUM(CASE WHEN qs.mastered = 0 THEN 1 ELSE 0 END), 0) AS unmastered,
-      COALESCE(SUM(CASE WHEN f.question_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS favorites
-    FROM questions q
-    INNER JOIN question_tags qt ON qt.question_id = q.id AND qt.tag = ${scope}
-    LEFT JOIN question_states qs ON qs.question_id = q.id AND qs.user_id = ${userId}
-    LEFT JOIN favorites f ON f.question_id = q.id AND f.user_id = ${userId}
-  `);
+  const [row] = await db
+    .select({
+      total: count(questions.id),
+      answered: count(questionStates.questionId),
+      firstCorrect: sql<number>`COALESCE(SUM(CASE WHEN ${questionStates.firstAttemptCorrect} = 1 THEN 1 ELSE 0 END), 0)`,
+      mastered: sql<number>`COALESCE(SUM(CASE WHEN ${questionStates.mastered} = 1 THEN 1 ELSE 0 END), 0)`,
+      unmastered: sql<number>`COALESCE(SUM(CASE WHEN ${questionStates.mastered} = 0 THEN 1 ELSE 0 END), 0)`,
+      favorites: sql<number>`COALESCE(SUM(CASE WHEN ${favorites.questionId} IS NOT NULL THEN 1 ELSE 0 END), 0)`,
+    })
+    .from(questions)
+    .innerJoin(
+      questionTags,
+      and(eq(questionTags.questionId, questions.id), eq(questionTags.tag, scope)),
+    )
+    .leftJoin(
+      questionStates,
+      and(
+        eq(questionStates.questionId, questions.id),
+        eq(questionStates.userId, userId),
+      ),
+    )
+    .leftJoin(
+      favorites,
+      and(eq(favorites.questionId, questions.id), eq(favorites.userId, userId)),
+    );
   const answered = Number(row?.answered ?? 0);
   const firstCorrect = Number(row?.firstCorrect ?? 0);
   return {

@@ -39,8 +39,8 @@ export default function App() {
   return (
     <Routes>
       <Route element={<AppShell user={currentUser.data} />}>
-        <Route index element={<DashboardPage />} />
-        <Route path="skills" element={<SkillRedirect />} />
+        <Route index element={<DashboardPage userId={currentUser.data.id} />} />
+        <Route path="skills" element={<SkillRedirect userId={currentUser.data.id} />} />
         <Route path="skills/random" element={<SkillRandomPage />} />
         <Route path="skills/:group" element={<SkillGroupPage />} />
         <Route path="prescriptions" element={<PrescriptionPage />} />

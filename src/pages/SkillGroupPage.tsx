@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Shuffle } from "lucide-react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import type { DashboardResponse, SkillGroupResponse } from "../../shared/types";
@@ -7,9 +7,9 @@ import { Loading } from "../components/Loading";
 import { QuestionCard } from "../components/QuestionCard";
 import { api, errorMessage } from "../lib/api";
 
-export function SkillRedirect() {
+export function SkillRedirect({ userId }: { userId: number }) {
   const dashboard = useQuery({
-    queryKey: ["dashboard"],
+    queryKey: ["dashboard", userId],
     queryFn: () => api<DashboardResponse>("/dashboard"),
   });
   if (dashboard.isPending) return <Loading />;
@@ -18,6 +18,7 @@ export function SkillRedirect() {
 }
 
 export function SkillGroupPage() {
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const group = Number(useParams().group);
   const groupQuery = useQuery({
@@ -34,6 +35,9 @@ export function SkillGroupPage() {
           ...(questionId ? { lastSkillQuestionId: questionId } : {}),
         }),
       }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
   });
 
   useEffect(() => {

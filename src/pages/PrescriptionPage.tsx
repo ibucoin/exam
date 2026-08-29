@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { PrescriptionResponse } from "../../shared/types";
@@ -8,6 +8,7 @@ import { QuestionCard } from "../components/QuestionCard";
 import { api, errorMessage } from "../lib/api";
 
 export function PrescriptionPage() {
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const id = useParams().id;
   const [searchParams] = useSearchParams();
@@ -24,6 +25,9 @@ export function PrescriptionPage() {
         method: "PATCH",
         body: JSON.stringify({ lastPrescriptionQuestionId: questionId }),
       }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
   });
 
   useEffect(() => {

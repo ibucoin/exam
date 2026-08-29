@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { CurrentUser } from "../../shared/types";
 import { api } from "../lib/api";
@@ -25,12 +25,11 @@ const mainNavigation = [
 
 export function AppShell({ user }: { user: CurrentUser }) {
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
   const logout = useMutation({
     mutationFn: () => api<void>("/auth/logout", { method: "POST" }),
-    onSettled: () => {
+    onSuccess: () => {
       queryClient.clear();
-      navigate("/");
+      window.location.replace("/");
     },
   });
 

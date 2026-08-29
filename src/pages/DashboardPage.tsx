@@ -53,9 +53,9 @@ function ScopePanel({
   );
 }
 
-export function DashboardPage() {
+export function DashboardPage({ userId }: { userId: number }) {
   const dashboard = useQuery({
-    queryKey: ["dashboard"],
+    queryKey: ["dashboard", userId],
     queryFn: () => api<DashboardResponse>("/dashboard"),
   });
   if (dashboard.isPending) return <Loading label="正在整理复习进度" />;
