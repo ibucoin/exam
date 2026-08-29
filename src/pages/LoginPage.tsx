@@ -14,7 +14,12 @@ export function LoginPage() {
         method: "POST",
         body: JSON.stringify({ username, password }),
       }),
-    onSuccess: (user) => queryClient.setQueryData(["me"], user),
+    onSuccess: (user) => {
+      queryClient.removeQueries({
+        predicate: (query) => query.queryKey[0] !== "me",
+      });
+      queryClient.setQueryData(["me"], user);
+    },
   });
 
   return (
