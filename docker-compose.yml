@@ -12,6 +12,8 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD 未配置}
     volumes:
       - /opt/code/exam/data:/data
+    ports:
+      - "127.0.0.1:18002:18002"
     networks:
       - proxy
     stop_grace_period: 15s
