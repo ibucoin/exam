@@ -3,7 +3,7 @@ import { initializeDatabase } from "./db/initialize";
 
 await initializeDatabase();
 
-const port = Number(process.env.PORT ?? 3000);
+const port = Number(process.env.PORT ?? 18002);
 
 Bun.serve({
   port,

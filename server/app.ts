@@ -9,6 +9,7 @@ import { ValidationError } from "./lib/validation";
 const app = new Hono();
 
 app.use("*", secureHeaders());
+app.get("/api/health", (c) => c.json({ status: "ok" }));
 app.route("/api/auth", auth);
 app.route("/api/admin", admin);
 app.route("/api", study);

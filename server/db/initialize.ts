@@ -22,6 +22,6 @@ export async function initializeDatabase() {
     username,
     passwordHash,
     role: "admin",
-    mustChangePassword: true,
+    mustChangePassword: false,
   });
 }

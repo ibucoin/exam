@@ -3,9 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "vite build",
     "dev": "bun run scripts/dev.ts",
     "dev:client": "vite",
     "dev:server": "bun --hot server/index.ts",
+    "start": "bun server/index.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p server/tsconfig.json",
     "db:generate": "drizzle-kit generate"
   },

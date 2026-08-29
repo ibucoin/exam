@@ -1,0 +1,22 @@
+services:
+  exam:
+    image: ghcr.io/ibucoin/exam:${IMAGE_TAG:?IMAGE_TAG 未配置}
+    container_name: exam-app
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      PORT: "18002"
+      DATABASE_PATH: /data/questions.sqlite3
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME 未配置}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD 未配置}
+    volumes:
+      - /opt/code/exam/data:/data
+    networks:
+      - proxy
+    stop_grace_period: 15s
+
+networks:
+  proxy:
+    external: true
+    name: 1panel-network
