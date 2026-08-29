@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Bookmark,
@@ -28,6 +28,7 @@ const kindLabels = {
 function refreshStudyData(queryClient: ReturnType<typeof useQueryClient>) {
   void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
   void queryClient.invalidateQueries({ queryKey: ["skills"] });
+  void queryClient.invalidateQueries({ queryKey: ["skill-random"] });
   void queryClient.invalidateQueries({ queryKey: ["prescription"] });
   void queryClient.invalidateQueries({ queryKey: ["review"] });
   void queryClient.invalidateQueries({ queryKey: ["search"] });
@@ -38,34 +39,54 @@ export function QuestionCard({
   number,
   onAnswered,
   freshAttempt = false,
+  initialAnswer,
+  initialResult,
+  submitAnswer,
+  allowRetry = true,
+  hideNoteUntilAnswered = false,
+  renderResultActions,
 }: {
   question: QuestionView;
   number: number;
   onAnswered?: (questionId: number, isCorrect: boolean | null) => void;
   freshAttempt?: boolean;
+  initialAnswer?: string[] | null;
+  initialResult?: AttemptResponse | null;
+  submitAnswer?: (answer: string[]) => Promise<AttemptResponse>;
+  allowRetry?: boolean;
+  hideNoteUntilAnswered?: boolean;
+  renderResultActions?: (result: AttemptResponse) => ReactNode;
 }) {
   const queryClient = useQueryClient();
   const previous = question.history;
-  const initialResult: AttemptResponse | null = !freshAttempt && question.solution
+  const derivedResult: AttemptResponse | null = initialResult ?? (!freshAttempt && question.solution
     ? {
         attemptId: question.pendingAttempt?.attemptId ?? 0,
         isCorrect: question.pendingAttempt ? null : (previous?.lastAttemptCorrect ?? null),
         history: previous,
         ...question.solution,
       }
-    : null;
+    : null);
+  const derivedAnswer = initialAnswer ?? (
+    freshAttempt ? [] : (question.pendingAttempt?.answer ?? previous?.lastAnswer ?? [])
+  );
   const [selected, setSelected] = useState<string[]>(
-    freshAttempt ? [] : (question.pendingAttempt?.answer ?? previous?.lastAnswer ?? []),
+    derivedAnswer,
   );
   const [draft, setDraft] = useState(
-    freshAttempt ? "" : (question.pendingAttempt?.answer[0] ?? previous?.lastAnswer[0] ?? ""),
+    derivedAnswer[0] ?? "",
   );
-  const [result, setResult] = useState<AttemptResponse | null>(initialResult);
+  const [result, setResult] = useState<AttemptResponse | null>(derivedResult);
   const [favorite, setFavorite] = useState(question.isFavorite);
   const [note, setNote] = useState(question.note);
   const [savedNote, setSavedNote] = useState(question.note);
 
   useEffect(() => setFavorite(question.isFavorite), [question.isFavorite]);
+  useEffect(() => {
+    setSelected(derivedAnswer);
+    setDraft(derivedAnswer[0] ?? "");
+    setResult(derivedResult);
+  }, [question.id, initialResult?.attemptId]);
   useEffect(() => {
     setNote(question.note);
     setSavedNote(question.note);
@@ -73,10 +94,12 @@ export function QuestionCard({
 
   const submit = useMutation({
     mutationFn: (answer: string[]) =>
-      api<AttemptResponse>(`/questions/${question.id}/attempt`, {
-        method: "POST",
-        body: JSON.stringify({ answer }),
-      }),
+      submitAnswer
+        ? submitAnswer(answer)
+        : api<AttemptResponse>(`/questions/${question.id}/attempt`, {
+            method: "POST",
+            body: JSON.stringify({ answer }),
+          }),
     onSuccess: (response) => {
       setResult(response);
       onAnswered?.(question.id, response.isCorrect);
@@ -269,7 +292,8 @@ export function QuestionCard({
               {assess.isError && <span className="form-error">{errorMessage(assess.error)}</span>}
             </div>
           )}
-          {result.isCorrect !== null && (
+          {renderResultActions?.(result)}
+          {allowRetry && result.isCorrect !== null && (
             <button className="secondary-button" type="button" onClick={startAgain}>
               <RotateCcw aria-hidden="true" />再答一次
             </button>
@@ -277,7 +301,7 @@ export function QuestionCard({
         </div>
       )}
 
-      <details className="question-note" open={Boolean(savedNote) || undefined}>
+      {(!hideNoteUntilAnswered || result) && <details className="question-note" open={Boolean(savedNote) || undefined}>
         <summary>
           <FileText aria-hidden="true" />
           <span>个人备注</span>
@@ -303,7 +327,7 @@ export function QuestionCard({
             {saveNote.isPending ? "保存中..." : "保存备注"}
           </button>
         </div>
-      </details>
+      </details>}
     </article>
   );
 }

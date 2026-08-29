@@ -3,6 +3,7 @@ import {
   index,
   integer,
   primaryKey,
+  real,
   sqliteTable,
   text,
   uniqueIndex,
@@ -111,6 +112,122 @@ export const questionNotes = sqliteTable(
     updatedAt: integer("updated_at").notNull().default(now),
   },
   (table) => [primaryKey({ columns: [table.userId, table.questionId] })],
+);
+
+export const fsrsCards = sqliteTable(
+  "fsrs_cards",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    questionId: integer("question_id")
+      .notNull()
+      .references(() => questions.id, { onDelete: "cascade" }),
+    due: integer("due").notNull(),
+    stability: real("stability").notNull(),
+    difficulty: real("difficulty").notNull(),
+    elapsedDays: integer("elapsed_days").notNull(),
+    scheduledDays: integer("scheduled_days").notNull(),
+    learningSteps: integer("learning_steps").notNull(),
+    reps: integer("reps").notNull(),
+    lapses: integer("lapses").notNull(),
+    state: integer("state").notNull(),
+    lastReview: integer("last_review"),
+    lastRating: integer("last_rating").notNull(),
+    updatedAt: integer("updated_at").notNull().default(now),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.questionId] }),
+    index("fsrs_cards_user_due_idx").on(table.userId, table.due),
+  ],
+);
+
+export const validationRounds = sqliteTable(
+  "validation_rounds",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    status: text("status", { enum: ["active", "completed", "abandoned"] })
+      .notNull()
+      .default("active"),
+    currentKey: integer("current_key", { mode: "boolean" }).default(true),
+    createdAt: integer("created_at").notNull().default(now),
+    completedAt: integer("completed_at"),
+  },
+  (table) => [
+    uniqueIndex("validation_rounds_user_current_unique").on(
+      table.userId,
+      table.currentKey,
+    ),
+  ],
+);
+
+export const validationRoundItems = sqliteTable(
+  "validation_round_items",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    roundId: integer("round_id")
+      .notNull()
+      .references(() => validationRounds.id, { onDelete: "cascade" }),
+    questionId: integer("question_id")
+      .notNull()
+      .references(() => questions.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    optionsJson: text("options_json").notNull(),
+    attemptId: integer("attempt_id").references(() => attempts.id, {
+      onDelete: "set null",
+    }),
+    isCorrect: integer("is_correct", { mode: "boolean" }),
+    rating: integer("rating"),
+    ratedAt: integer("rated_at"),
+  },
+  (table) => [
+    uniqueIndex("validation_round_items_position_unique").on(
+      table.roundId,
+      table.position,
+    ),
+    uniqueIndex("validation_round_items_question_unique").on(
+      table.roundId,
+      table.questionId,
+    ),
+  ],
+);
+
+export const fsrsReviewLogs = sqliteTable(
+  "fsrs_review_logs",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    questionId: integer("question_id")
+      .notNull()
+      .references(() => questions.id, { onDelete: "cascade" }),
+    roundItemId: integer("round_item_id")
+      .notNull()
+      .references(() => validationRoundItems.id, { onDelete: "cascade" }),
+    attemptId: integer("attempt_id")
+      .notNull()
+      .references(() => attempts.id, { onDelete: "cascade" }),
+    rating: integer("rating").notNull(),
+    state: integer("state").notNull(),
+    due: integer("due").notNull(),
+    stability: real("stability").notNull(),
+    difficulty: real("difficulty").notNull(),
+    elapsedDays: integer("elapsed_days").notNull(),
+    lastElapsedDays: integer("last_elapsed_days").notNull(),
+    scheduledDays: integer("scheduled_days").notNull(),
+    learningSteps: integer("learning_steps").notNull(),
+    reviewedAt: integer("reviewed_at").notNull(),
+  },
+  (table) => [
+    index("fsrs_review_logs_user_question_idx").on(
+      table.userId,
+      table.questionId,
+    ),
+  ],
 );
 
 export const userProgress = sqliteTable("user_progress", {

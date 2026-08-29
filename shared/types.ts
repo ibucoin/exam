@@ -1,6 +1,7 @@
 export type UserRole = "admin" | "user";
 export type QuestionKind = "Radio" | "Checkbox" | "Judge" | "FillBlank";
 export type QuestionScope = "技能" | "处方审核";
+export type FsrsRating = "again" | "hard" | "good";
 
 export interface CurrentUser {
   id: number;
@@ -46,8 +47,29 @@ export interface SkillGroupResponse {
   questions: QuestionView[];
 }
 
+export interface ValidationQuestion {
+  itemId: number;
+  position: number;
+  question: QuestionView;
+  answer: string[] | null;
+  result: AttemptResponse | null;
+  rating: FsrsRating | null;
+}
+
 export interface SkillRandomResponse {
-  questions: QuestionView[];
+  roundId: number;
+  status: "active" | "completed";
+  questions: ValidationQuestion[];
+  answered: number;
+  correct: number;
+  accuracy: number;
+  dueRemaining: number;
+  stableMastered: number;
+}
+
+export interface ValidationRatingResponse {
+  rating: Exclude<FsrsRating, "again">;
+  status: "active" | "completed";
 }
 
 export interface PrescriptionResponse {
@@ -77,6 +99,13 @@ export interface ScopeStats {
 export interface DashboardResponse {
   skill: ScopeStats;
   prescription: ScopeStats;
+  skillValidation: {
+    reviewed: number;
+    correct: number;
+    accuracy: number;
+    due: number;
+    stableMastered: number;
+  };
   progress: {
     lastSkillGroup: number;
     lastSkillQuestionId: number | null;

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   ArrowRight,
   BookOpen,
+  BrainCircuit,
   ClipboardCheck,
   Heart,
   Search,
@@ -60,7 +61,7 @@ export function DashboardPage() {
   if (dashboard.isPending) return <Loading label="正在整理复习进度" />;
   if (dashboard.isError) return <p className="page-error">{errorMessage(dashboard.error)}</p>;
 
-  const { skill, prescription, progress } = dashboard.data;
+  const { skill, prescription, skillValidation, progress } = dashboard.data;
   const skillTarget = `/skills/${progress.lastSkillGroup}${
     progress.lastSkillQuestionId ? `#question-${progress.lastSkillQuestionId}` : ""
   }`;
@@ -91,6 +92,24 @@ export function DashboardPage() {
           continueTo={prescriptionTarget}
           accent="coral"
         />
+      </section>
+      <section className="validation-panel" aria-label="技能验证进度">
+        <header>
+          <span className="scope-icon"><BrainCircuit aria-hidden="true" /></span>
+          <div>
+            <h2>技能随机验证</h2>
+            <p>按记忆状态安排到期题目</p>
+          </div>
+        </header>
+        <dl className="validation-metrics">
+          <div><dt>验证次数</dt><dd>{skillValidation.reviewed}</dd></div>
+          <div><dt>验证正确率</dt><dd>{skillValidation.accuracy}%</dd></div>
+          <div><dt>当前到期</dt><dd>{skillValidation.due}</dd></div>
+          <div><dt>稳定掌握</dt><dd>{skillValidation.stableMastered}</dd></div>
+        </dl>
+        <Link className="panel-link" to="/skills/random">
+          开始验证 <ArrowRight aria-hidden="true" />
+        </Link>
       </section>
       <section className="quick-section">
         <h2>专项复习</h2>
