@@ -48,7 +48,7 @@ export function scheduleQuestion(
   }: {
     userId: number;
     questionId: number;
-    roundItemId: number;
+    roundItemId: number | null;
     attemptId: number;
     rating: Grade;
     now: number;

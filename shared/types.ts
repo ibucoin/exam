@@ -39,37 +39,65 @@ export interface QuestionView {
   };
 }
 
+export interface RoundAnswerView {
+  attemptId: number;
+  answer: string[];
+  isCorrect: boolean | null;
+  answeredAt: number;
+}
+
+export interface RoundQuestionView extends QuestionView {
+  roundAnswer: RoundAnswerView | null;
+}
+
+export interface RoundSummary {
+  id: number;
+  roundNo: number;
+  status: "active" | "completed";
+  total: number;
+  answered: number;
+  correct: number;
+  accuracy: number;
+  createdAt: number;
+  completedAt: number | null;
+}
+
+export interface RepeatedWrongQuestion {
+  id: number;
+  kind: QuestionKind;
+  stem: string;
+  wrongRounds: number[];
+  group: number | null;
+}
+
+export interface RoundScopeOverview {
+  scope: QuestionScope;
+  rounds: RoundSummary[];
+  repeatedWrong: RepeatedWrongQuestion[];
+}
+
+export interface RoundsOverviewResponse {
+  skill: RoundScopeOverview;
+  prescription: RoundScopeOverview;
+}
+
+export interface RoundArchiveResponse {
+  round: RoundSummary;
+  scope: QuestionScope;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  questions: RoundQuestionView[];
+}
+
 export interface SkillGroupResponse {
   group: number;
   groupSize: number;
   totalGroups: number;
   totalQuestions: number;
-  questions: QuestionView[];
-}
-
-export interface ValidationQuestion {
-  itemId: number;
-  position: number;
-  question: QuestionView;
-  answer: string[] | null;
-  result: AttemptResponse | null;
-  rating: FsrsRating | null;
-}
-
-export interface SkillRandomResponse {
-  roundId: number;
-  status: "active" | "completed";
-  questions: ValidationQuestion[];
-  answered: number;
-  correct: number;
-  accuracy: number;
-  dueRemaining: number;
-  stableMastered: number;
-}
-
-export interface ValidationRatingResponse {
-  rating: Exclude<FsrsRating, "again">;
-  status: "active" | "completed";
+  round: RoundSummary;
+  groupAnswered: number[];
+  questions: RoundQuestionView[];
 }
 
 export interface PrescriptionResponse {
@@ -77,7 +105,21 @@ export interface PrescriptionResponse {
   totalQuestions: number;
   previousId: number | null;
   nextId: number | null;
-  question: QuestionView;
+  round: RoundSummary;
+  question: RoundQuestionView;
+}
+
+export interface ReviewQuestionView extends QuestionView {
+  due: number | null;
+}
+
+export interface ReviewResponse {
+  dueCount: number;
+  questions: ReviewQuestionView[];
+}
+
+export interface ReviewRatingResponse {
+  rating: Exclude<FsrsRating, "again">;
 }
 
 export interface AttemptResponse extends QuestionSolution {
@@ -99,12 +141,12 @@ export interface ScopeStats {
 export interface DashboardResponse {
   skill: ScopeStats;
   prescription: ScopeStats;
-  skillValidation: {
-    reviewed: number;
-    correct: number;
-    accuracy: number;
+  skillRound: RoundSummary;
+  prescriptionRound: RoundSummary;
+  review: {
     due: number;
     stableMastered: number;
+    wrongUnmastered: number;
   };
   progress: {
     lastSkillGroup: number;

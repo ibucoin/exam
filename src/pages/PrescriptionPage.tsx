@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import type { PrescriptionResponse } from "../../shared/types";
+import type { AttemptResponse, PrescriptionResponse } from "../../shared/types";
 import { Loading } from "../components/Loading";
 import { QuestionCard } from "../components/QuestionCard";
 import { api, errorMessage } from "../lib/api";
+import { toRoundResult } from "./SkillGroupPage";
 
 export function PrescriptionPage() {
   const queryClient = useQueryClient();
@@ -37,14 +38,18 @@ export function PrescriptionPage() {
   if (questionQuery.isPending) return <Loading label="正在加载处方审核题" />;
   if (questionQuery.isError) return <p className="page-error">{errorMessage(questionQuery.error)}</p>;
   const data = questionQuery.data;
+  const question = data.question;
 
   return (
     <div className="study-page prescription-page">
       <header className="study-heading">
         <div>
-          <p className="eyebrow">处方审核</p>
+          <p className="eyebrow">处方审核 · 第 {data.round.roundNo} 轮</p>
           <h1>案例 {data.index}</h1>
-          <p>共 {data.totalQuestions} 道案例</p>
+          <p>
+            共 {data.totalQuestions} 道案例 · 本轮 {data.round.answered} /{" "}
+            {data.round.total}，正确率 {data.round.accuracy}%
+          </p>
         </div>
         <form
           className="jump-form"
@@ -68,7 +73,21 @@ export function PrescriptionPage() {
           <button className="secondary-button" type="submit">跳转</button>
         </form>
       </header>
-      <QuestionCard key={data.question.id} question={data.question} number={data.index} />
+      <QuestionCard
+        key={`${data.round.id}-${question.id}`}
+        question={question}
+        number={data.index}
+        freshAttempt={!question.roundAnswer}
+        initialAnswer={question.roundAnswer?.answer ?? null}
+        initialResult={toRoundResult(question)}
+        allowRetry={false}
+        submitAnswer={(answer) =>
+          api<AttemptResponse>(`/rounds/questions/${question.id}/answer`, {
+            method: "POST",
+            body: JSON.stringify({ answer }),
+          })
+        }
+      />
       <footer className="study-footer prescription-navigation">
         {data.previousId ? (
           <Link className="secondary-button" to={`/prescriptions/${data.previousId}`}><ChevronLeft />上一题</Link>

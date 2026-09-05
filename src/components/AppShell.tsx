@@ -2,6 +2,7 @@ import {
   BookOpen,
   ClipboardCheck,
   Heart,
+  History,
   Home,
   LogOut,
   Search,
@@ -21,6 +22,7 @@ const mainNavigation = [
   { to: "/review/wrong", label: "错题", icon: TriangleAlert },
   { to: "/review/favorite", label: "收藏", icon: Heart },
   { to: "/search", label: "搜索", icon: Search },
+  { to: "/rounds", label: "轮次", icon: History },
 ];
 
 export function AppShell({ user }: { user: CurrentUser }) {

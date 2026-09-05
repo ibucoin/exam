@@ -19,31 +19,39 @@ import type {
   QuestionKind,
   QuestionScope,
   QuestionView,
+  RepeatedWrongQuestion,
+  ReviewQuestionView,
+  ReviewResponse,
+  RoundArchiveResponse,
+  RoundQuestionView,
+  RoundScopeOverview,
+  RoundsOverviewResponse,
+  RoundSummary,
   ScopeStats,
   SearchResponse,
   SearchResult,
   SkillGroupResponse,
-  SkillRandomResponse,
-  ValidationQuestion,
 } from "../../shared/types";
 import { db } from "../db/client";
 import {
   attempts,
   favorites,
   fsrsCards,
+  fsrsReviewLogs,
   questions,
   questionNotes,
   questionStates,
   questionTags,
+  roundAnswers,
+  studyRounds,
   userProgress,
-  validationRoundItems,
-  validationRounds,
 } from "../db/schema";
 import { type AppEnv, requireAuth } from "../lib/auth";
 import { FSRS_STABLE_DAYS, Rating, scheduleQuestion } from "../lib/fsrs";
 import { readJsonBody } from "../lib/validation";
 
 const GROUP_SIZE = 20;
+const SCOPES = ["技能", "处方审核"] as const;
 const study = new Hono<AppEnv>();
 study.use("*", requireAuth);
 
@@ -179,8 +187,10 @@ async function loadQuestionViews(userId: number, questionIds: number[]) {
   });
 }
 
+type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 function updateQuestionState(
-  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  tx: Transaction,
   userId: number,
   questionId: number,
   answerJson: string,
@@ -230,456 +240,494 @@ async function getHistory(userId: number, questionId: number) {
     : null;
 }
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+function seededRandom(seed: number) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
-function shuffle<T>(items: T[]) {
+function shuffle<T>(items: T[], random: () => number = Math.random) {
   const result = [...items];
   for (let index = result.length - 1; index > 0; index -= 1) {
-    const target = Math.floor(Math.random() * (index + 1));
+    const target = Math.floor(random() * (index + 1));
     [result[index], result[target]] = [result[target], result[index]];
   }
   return result;
 }
 
-function shuffledOptions(stem: string, options: string[]) {
+function shuffledOptions(
+  stem: string,
+  options: string[],
+  random?: () => number,
+) {
   const text = `${stem}\n${options.join("\n")}`;
   const dependsOnOrder =
     /(?:^|[^a-z])(?:[A-ZＡ-Ｚ]\s*(?:、|,|，|和|或|及|\/|\+)\s*)+[A-ZＡ-Ｚ](?:[^a-z]|$)/i.test(text) ||
     /(以上|上述).*(选项|说法|答案|均|都)|(?:均|都).*(正确|错误|符合|不符合)/.test(text);
-  return dependsOnOrder ? options : shuffle(options);
+  return dependsOnOrder ? options : shuffle(options, random);
 }
 
-function createValidationRound(tx: Transaction, userId: number, now: number) {
-  const candidates = tx
-    .select({
-      id: questions.id,
-      stem: questions.stem,
-      optionsJson: questions.optionsJson,
-    })
-    .from(questions)
-    .innerJoin(questionTags, eq(questionTags.questionId, questions.id))
-    .leftJoin(
-      fsrsCards,
-      and(eq(fsrsCards.questionId, questions.id), eq(fsrsCards.userId, userId)),
-    )
-    .leftJoin(
-      questionStates,
-      and(
-        eq(questionStates.questionId, questions.id),
-        eq(questionStates.userId, userId),
-      ),
-    )
-    .where(eq(questionTags.tag, "技能"))
-    .orderBy(
-      sql`CASE
-        WHEN ${fsrsCards.questionId} IS NOT NULL AND ${fsrsCards.due} <= ${now} THEN 0
-        WHEN ${fsrsCards.questionId} IS NULL AND ${questionStates.lastAttemptCorrect} = 0 THEN 1
-        WHEN ${fsrsCards.questionId} IS NULL THEN 2
-        ELSE 3
-      END`,
-      sql`RANDOM()`,
-    )
-    .limit(GROUP_SIZE)
-    .all();
-  if (!candidates.length) return null;
-
-  const inserted = tx
-    .insert(validationRounds)
-    .values({ userId, currentKey: true })
-    .returning({ id: validationRounds.id })
-    .get();
-  tx.insert(validationRoundItems)
-    .values(
-      candidates.map((question, index) => ({
-        roundId: inserted.id,
-        questionId: question.id,
-        position: index + 1,
-        optionsJson: JSON.stringify(
-          shuffledOptions(question.stem, parseStringArray(question.optionsJson)),
-        ),
-      })),
-    )
-    .run();
-  return inserted.id;
+function isScope(value: unknown): value is QuestionScope {
+  return value === "技能" || value === "处方审核";
 }
 
-function fsrsRating(value: number | null) {
-  if (value === Rating.Again) return "again" as const;
-  if (value === Rating.Hard) return "hard" as const;
-  if (value === Rating.Good) return "good" as const;
-  return null;
-}
-
-function completeValidationRound(tx: Transaction, roundId: number, now: number) {
-  const pending = tx
+function completeRoundIfDone(
+  tx: Transaction,
+  roundId: number,
+  scope: QuestionScope,
+  now: number,
+) {
+  const total = tx
     .select({ total: count() })
-    .from(validationRoundItems)
+    .from(questionTags)
+    .where(eq(questionTags.tag, scope))
+    .get();
+  const done = tx
+    .select({ total: count() })
+    .from(roundAnswers)
     .where(
-      and(
-        eq(validationRoundItems.roundId, roundId),
-        isNull(validationRoundItems.rating),
-      ),
+      and(eq(roundAnswers.roundId, roundId), isNotNull(roundAnswers.isCorrect)),
     )
     .get();
-  if ((pending?.total ?? 0) > 0) return "active" as const;
-  tx.update(validationRounds)
-    .set({ status: "completed", completedAt: now })
-    .where(eq(validationRounds.id, roundId))
-    .run();
-  return "completed" as const;
+  if ((total?.total ?? 0) > 0 && (done?.total ?? 0) >= (total?.total ?? 0)) {
+    tx.update(studyRounds)
+      .set({ status: "completed", completedAt: now })
+      .where(and(eq(studyRounds.id, roundId), eq(studyRounds.status, "active")))
+      .run();
+    return true;
+  }
+  return false;
 }
 
-async function validationStats(userId: number, now: number) {
-  const row = await db.get<{
-    reviewed: number;
-    correct: number;
-    due: number;
-    stableMastered: number;
-  }>(sql`
+type StudyRound = typeof studyRounds.$inferSelect;
+
+function latestRound(userId: number, scope: QuestionScope) {
+  return db
+    .select()
+    .from(studyRounds)
+    .where(and(eq(studyRounds.userId, userId), eq(studyRounds.scope, scope)))
+    .orderBy(desc(studyRounds.roundNo))
+    .limit(1)
+    .get();
+}
+
+function ensureRound(userId: number, scope: QuestionScope): StudyRound {
+  const existing = latestRound(userId, scope);
+  if (existing) return existing;
+  try {
+    return db.transaction((tx) => {
+      const now = Date.now();
+      const round = tx
+        .insert(studyRounds)
+        .values({ userId, scope, roundNo: 1, createdAt: now })
+        .returning()
+        .get();
+      tx.run(sql`
+        INSERT INTO round_answers (round_id, question_id, attempt_id, answer_json, is_correct, answered_at)
+        SELECT ${round.id}, a.question_id, a.id, a.answer_json, a.is_correct, a.created_at
+        FROM attempts a
+        INNER JOIN question_tags qt ON qt.question_id = a.question_id AND qt.tag = ${scope}
+        WHERE a.user_id = ${userId}
+          AND a.id = (
+            SELECT MIN(a2.id) FROM attempts a2
+            WHERE a2.user_id = ${userId} AND a2.question_id = a.question_id
+          )
+      `);
+      completeRoundIfDone(tx, round.id, scope, now);
+      return tx
+        .select()
+        .from(studyRounds)
+        .where(eq(studyRounds.id, round.id))
+        .get()!;
+    });
+  } catch {
+    return latestRound(userId, scope)!;
+  }
+}
+
+async function roundSummary(round: StudyRound): Promise<RoundSummary> {
+  const [row] = await db.all<{ total: number; answered: number; correct: number }>(sql`
     SELECT
-      (SELECT COUNT(*)
-       FROM validation_round_items item
-       INNER JOIN validation_rounds round ON round.id = item.round_id
-       WHERE round.user_id = ${userId} AND item.attempt_id IS NOT NULL) AS reviewed,
-      (SELECT COUNT(*)
-       FROM validation_round_items item
-       INNER JOIN validation_rounds round ON round.id = item.round_id
-       WHERE round.user_id = ${userId} AND item.is_correct = 1) AS correct,
-      (SELECT COUNT(*) FROM fsrs_cards WHERE user_id = ${userId} AND due <= ${now}) AS due,
-      (SELECT COUNT(*) FROM fsrs_cards WHERE user_id = ${userId} AND stability >= ${FSRS_STABLE_DAYS} AND due > ${now}) AS stableMastered
+      (SELECT COUNT(*) FROM question_tags WHERE tag = ${round.scope}) AS total,
+      (SELECT COUNT(*) FROM round_answers WHERE round_id = ${round.id}) AS answered,
+      (SELECT COUNT(*) FROM round_answers WHERE round_id = ${round.id} AND is_correct = 1) AS correct
   `);
-  const reviewed = Number(row?.reviewed ?? 0);
+  const answered = Number(row?.answered ?? 0);
   const correct = Number(row?.correct ?? 0);
   return {
-    reviewed,
-    correct,
-    accuracy: reviewed ? Math.round((correct / reviewed) * 1000) / 10 : 0,
-    due: Number(row?.due ?? 0),
-    stableMastered: Number(row?.stableMastered ?? 0),
-  };
-}
-
-async function loadValidationRound(userId: number, roundId: number) {
-  const round = await db.query.validationRounds.findFirst({
-    where: and(
-      eq(validationRounds.id, roundId),
-      eq(validationRounds.userId, userId),
-      eq(validationRounds.currentKey, true),
-    ),
-  });
-  if (!round || round.status === "abandoned") return null;
-  const items = await db
-    .select()
-    .from(validationRoundItems)
-    .where(eq(validationRoundItems.roundId, round.id))
-    .orderBy(asc(validationRoundItems.position));
-  const attemptIds = items.flatMap((item) => item.attemptId === null ? [] : [item.attemptId]);
-  const attemptRows = attemptIds.length
-    ? await db
-        .select({ id: attempts.id, answerJson: attempts.answerJson })
-        .from(attempts)
-        .where(and(eq(attempts.userId, userId), inArray(attempts.id, attemptIds)))
-    : [];
-  const answersByAttempt = new Map(
-    attemptRows.map((attempt) => [attempt.id, parseStringArray(attempt.answerJson)]),
-  );
-  const views = await loadQuestionViews(
-    userId,
-    items.map((item) => item.questionId),
-  );
-  const byId = new Map(views.map((view) => [view.id, view]));
-  const validationQuestions: ValidationQuestion[] = items.flatMap((item) => {
-    const loaded = byId.get(item.questionId);
-    if (!loaded) return [];
-    const answered = item.attemptId !== null;
-    const answer = item.attemptId === null ? null : answersByAttempt.get(item.attemptId) ?? [];
-    const question = {
-      ...loaded,
-      options: parseStringArray(item.optionsJson),
-      note: answered ? loaded.note : "",
-      history: loaded.history
-        ? { ...loaded.history, lastAnswer: answer ?? [] }
-        : null,
-      ...(!answered ? { solution: undefined, pendingAttempt: undefined } : {}),
-    };
-    return [{
-      itemId: item.id,
-      position: item.position,
-      question,
-      answer,
-      result: answered && loaded.solution
-        ? {
-            attemptId: item.attemptId!,
-            isCorrect: item.isCorrect,
-            history: loaded.history,
-            ...loaded.solution,
-          }
-        : null,
-      rating: fsrsRating(item.rating),
-    }];
-  });
-  const answered = validationQuestions.filter((item) => item.result).length;
-  const correct = validationQuestions.filter((item) => item.result?.isCorrect).length;
-  const stats = await validationStats(userId, Date.now());
-  const result: SkillRandomResponse = {
-    roundId: round.id,
+    id: round.id,
+    roundNo: round.roundNo,
     status: round.status,
-    questions: validationQuestions,
+    total: Number(row?.total ?? 0),
     answered,
     correct,
     accuracy: answered ? Math.round((correct / answered) * 1000) / 10 : 0,
-    dueRemaining: stats.due,
-    stableMastered: stats.stableMastered,
+    createdAt: round.createdAt,
+    completedAt: round.completedAt,
   };
-  return result;
 }
 
-study.get("/skills/random", async (c) => {
-  const userId = c.get("user").id;
-  let round = await db.query.validationRounds.findFirst({
-    where: and(
-      eq(validationRounds.userId, userId),
-      eq(validationRounds.currentKey, true),
-    ),
-    orderBy: desc(validationRounds.id),
-  });
-  if (!round) {
-    const roundId = db.transaction((tx) => createValidationRound(tx, userId, Date.now()));
-    if (!roundId) return c.json({ error: "技能题库为空" }, 404);
-    round = await db.query.validationRounds.findFirst({
-      where: eq(validationRounds.id, roundId),
-    });
-  }
-  const result = round ? await loadValidationRound(userId, round.id) : null;
-  return result ? c.json(result) : c.json({ error: "验证轮次不存在" }, 404);
-});
-
-study.post("/skills/random/next", async (c) => {
-  const userId = c.get("user").id;
-  const roundId = db.transaction((tx) => {
-    const current = tx
-      .select()
-      .from(validationRounds)
-      .where(
-        and(
-          eq(validationRounds.userId, userId),
-          eq(validationRounds.currentKey, true),
-        ),
-      )
-      .get();
-    if (current) {
-      tx.update(validationRounds)
-        .set({
-          currentKey: null,
-          ...(current.status === "active" ? { status: "abandoned" as const } : {}),
-        })
-        .where(eq(validationRounds.id, current.id))
-        .run();
+async function toRoundQuestions(
+  round: StudyRound,
+  views: QuestionView[],
+): Promise<RoundQuestionView[]> {
+  const ids = views.map((view) => view.id);
+  const answerRows = ids.length
+    ? await db
+        .select()
+        .from(roundAnswers)
+        .where(
+          and(
+            eq(roundAnswers.roundId, round.id),
+            inArray(roundAnswers.questionId, ids),
+          ),
+        )
+    : [];
+  const byQuestion = new Map(answerRows.map((row) => [row.questionId, row]));
+  return views.map((view) => {
+    const row = byQuestion.get(view.id);
+    const options =
+      round.roundNo > 1 && view.kind !== "FillBlank"
+        ? shuffledOptions(
+            view.stem,
+            view.options,
+            seededRandom(round.id * 1_000_003 + view.id),
+          )
+        : view.options;
+    if (!row) {
+      return {
+        ...view,
+        options,
+        solution: undefined,
+        pendingAttempt: undefined,
+        roundAnswer: null,
+      };
     }
-    return createValidationRound(tx, userId, Date.now());
+    return {
+      ...view,
+      options,
+      pendingAttempt: undefined,
+      roundAnswer: {
+        attemptId: row.attemptId ?? 0,
+        answer: parseStringArray(row.answerJson),
+        isCorrect: row.isCorrect,
+        answeredAt: row.answeredAt,
+      },
+    };
   });
-  if (!roundId) return c.json({ error: "技能题库为空" }, 404);
-  const result = await loadValidationRound(userId, roundId);
-  return result ? c.json(result, 201) : c.json({ error: "创建验证轮次失败" }, 500);
-});
+}
 
-study.post("/skills/random/items/:id/answer", async (c) => {
-  const itemId = Number(c.req.param("id"));
-  const body = await readJsonBody(c.req.raw);
-  if (!Number.isInteger(itemId) || !Array.isArray(body.answer)) {
-    return c.json({ error: "答案格式不正确" }, 400);
-  }
-  const answer = body.answer.filter(
+async function scopeQuestionIds(scope: QuestionScope) {
+  const rows = await db
+    .select({ id: questions.id })
+    .from(questions)
+    .innerJoin(questionTags, eq(questionTags.questionId, questions.id))
+    .where(eq(questionTags.tag, scope))
+    .orderBy(asc(questions.id));
+  return rows.map((row) => row.id);
+}
+
+function isAnswerCorrect(answer: string[], correctAnswers: string[]) {
+  const normalize = (items: string[]) => [...new Set(items)].sort();
+  const submitted = normalize(answer);
+  const expected = normalize(correctAnswers);
+  return (
+    submitted.length === expected.length &&
+    submitted.every((item, index) => item === expected[index])
+  );
+}
+
+function readAnswer(body: Record<string, unknown>) {
+  if (!Array.isArray(body.answer)) return null;
+  return body.answer.filter(
     (item): item is string => typeof item === "string" && item.trim().length > 0,
   );
-  const userId = c.get("user").id;
-  const row = await db
-    .select({
-      item: validationRoundItems,
-      round: validationRounds,
-      question: questions,
-    })
-    .from(validationRoundItems)
-    .innerJoin(validationRounds, eq(validationRounds.id, validationRoundItems.roundId))
-    .innerJoin(questions, eq(questions.id, validationRoundItems.questionId))
-    .where(
-      and(
-        eq(validationRoundItems.id, itemId),
-        eq(validationRounds.userId, userId),
-        eq(validationRounds.currentKey, true),
-        eq(validationRounds.status, "active"),
-      ),
-    )
-    .get();
-  if (!row) return c.json({ error: "验证题目不存在" }, 404);
-  if (row.item.attemptId !== null) return c.json({ error: "该题已经作答" }, 409);
-  if (!answer.length || (row.question.kind !== "Checkbox" && answer.length !== 1)) {
-    return c.json({ error: "请先完成作答" }, 400);
-  }
-  const options = parseStringArray(row.item.optionsJson);
-  if (row.question.kind === "FillBlank" || answer.some((item) => !options.includes(item))) {
-    return c.json({ error: "答案不在可选项中" }, 400);
-  }
-
-  const normalize = (items: string[]) => [...new Set(items)].sort();
-  const expected = normalize(parseStringArray(row.question.correctAnswerJson));
-  const submitted = normalize(answer);
-  const isCorrect =
-    submitted.length === expected.length &&
-    submitted.every((item, index) => item === expected[index]);
-  const answerJson = JSON.stringify(answer);
-  let attemptId = 0;
-  db.transaction((tx) => {
-    const now = Date.now();
-    const attempt = tx
-      .insert(attempts)
-      .values({ userId, questionId: row.question.id, answerJson, isCorrect, assessedAt: now })
-      .returning({ id: attempts.id })
-      .get();
-    attemptId = attempt.id;
-    updateQuestionState(tx, userId, row.question.id, answerJson, isCorrect);
-    tx.update(validationRoundItems)
-      .set({
-        attemptId,
-        isCorrect,
-        ...(!isCorrect ? { rating: Rating.Again, ratedAt: now } : {}),
-      })
-      .where(eq(validationRoundItems.id, itemId))
-      .run();
-    if (!isCorrect) {
-      scheduleQuestion(tx, {
-        userId,
-        questionId: row.question.id,
-        roundItemId: itemId,
-        attemptId,
-        rating: Rating.Again,
-        now,
-      });
-      completeValidationRound(tx, row.round.id, now);
-    }
-  });
-  const result: AttemptResponse = {
-    attemptId,
-    isCorrect,
-    history: await getHistory(userId, row.question.id),
-    correctAnswers: expected,
-    analysisText: row.question.analysisText,
-  };
-  return c.json(result, 201);
-});
-
-study.post("/skills/random/items/:id/rating", async (c) => {
-  const itemId = Number(c.req.param("id"));
-  const body = await readJsonBody(c.req.raw);
-  const rating = body.rating === "hard"
-    ? Rating.Hard
-    : body.rating === "good"
-      ? Rating.Good
-      : null;
-  if (!Number.isInteger(itemId) || rating === null) {
-    return c.json({ error: "掌握程度不正确" }, 400);
-  }
-  const userId = c.get("user").id;
-  const row = await db
-    .select({ item: validationRoundItems, round: validationRounds })
-    .from(validationRoundItems)
-    .innerJoin(validationRounds, eq(validationRounds.id, validationRoundItems.roundId))
-    .where(
-      and(
-        eq(validationRoundItems.id, itemId),
-        eq(validationRounds.userId, userId),
-        eq(validationRounds.currentKey, true),
-        eq(validationRounds.status, "active"),
-      ),
-    )
-    .get();
-  if (!row) return c.json({ error: "验证题目不存在" }, 404);
-  if (!row.item.isCorrect || row.item.attemptId === null) {
-    return c.json({ error: "只有答对的题目可以确认掌握程度" }, 409);
-  }
-  if (row.item.rating !== null) return c.json({ error: "该题已经完成评分" }, 409);
-
-  const status = db.transaction((tx) => {
-    const now = Date.now();
-    tx.update(validationRoundItems)
-      .set({ rating, ratedAt: now })
-      .where(eq(validationRoundItems.id, itemId))
-      .run();
-    scheduleQuestion(tx, {
-      userId,
-      questionId: row.item.questionId,
-      roundItemId: itemId,
-      attemptId: row.item.attemptId!,
-      rating,
-      now,
-    });
-    return completeValidationRound(tx, row.round.id, now);
-  });
-  return c.json({ rating: body.rating, status });
-});
+}
 
 study.get("/skills/:group", async (c) => {
   const group = Number(c.req.param("group"));
   if (!Number.isInteger(group) || group < 1) {
     return c.json({ error: "题组不存在" }, 404);
   }
-
-  const totalRow = await db
-    .select({ total: count() })
-    .from(questionTags)
-    .where(eq(questionTags.tag, "技能"));
-  const totalQuestions = totalRow[0]?.total ?? 0;
-  const totalGroups = Math.ceil(totalQuestions / GROUP_SIZE);
+  const ids = await scopeQuestionIds("技能");
+  const totalGroups = Math.ceil(ids.length / GROUP_SIZE);
   if (group > totalGroups) {
     return c.json({ error: "题组不存在" }, 404);
   }
 
-  const ids = await db
-    .select({ id: questions.id })
-    .from(questions)
-    .innerJoin(questionTags, eq(questionTags.questionId, questions.id))
-    .where(eq(questionTags.tag, "技能"))
-    .orderBy(asc(questions.id))
-    .limit(GROUP_SIZE)
-    .offset((group - 1) * GROUP_SIZE);
+  const userId = c.get("user").id;
+  const round = ensureRound(userId, "技能");
+  const pageIds = ids.slice((group - 1) * GROUP_SIZE, group * GROUP_SIZE);
+  const views = await loadQuestionViews(userId, pageIds);
+  const answeredRows = await db
+    .select({ questionId: roundAnswers.questionId })
+    .from(roundAnswers)
+    .where(eq(roundAnswers.roundId, round.id));
+  const answeredSet = new Set(answeredRows.map((row) => row.questionId));
+  const groupAnswered = Array.from({ length: totalGroups }, (_, index) =>
+    ids
+      .slice(index * GROUP_SIZE, (index + 1) * GROUP_SIZE)
+      .filter((id) => answeredSet.has(id)).length,
+  );
   const result: SkillGroupResponse = {
     group,
     groupSize: GROUP_SIZE,
     totalGroups,
-    totalQuestions,
-    questions: await loadQuestionViews(
-      c.get("user").id,
-      ids.map((row) => row.id),
-    ),
+    totalQuestions: ids.length,
+    round: await roundSummary(round),
+    groupAnswered,
+    questions: await toRoundQuestions(round, views),
   };
   return c.json(result);
 });
 
 study.get("/prescriptions/:id?", async (c) => {
-  const ids = await db
-    .select({ id: questions.id })
-    .from(questions)
-    .innerJoin(questionTags, eq(questionTags.questionId, questions.id))
-    .where(eq(questionTags.tag, "处方审核"))
-    .orderBy(asc(questions.id));
+  const ids = await scopeQuestionIds("处方审核");
   const requestedIndex = Number(c.req.query("index"));
-  let requestedId = ids[0]?.id;
+  let requestedId = ids[0];
   if (Number.isInteger(requestedIndex) && requestedIndex > 0) {
-    requestedId = ids[requestedIndex - 1]?.id;
+    requestedId = ids[requestedIndex - 1];
   } else if (c.req.param("id")) {
     requestedId = Number(c.req.param("id"));
   }
-  const index = ids.findIndex((row) => row.id === requestedId);
+  const index = ids.findIndex((id) => id === requestedId);
   if (index < 0) {
     return c.json({ error: "题目不存在" }, 404);
   }
-  const loaded = await loadQuestionViews(c.get("user").id, [ids[index].id]);
+  const userId = c.get("user").id;
+  const round = ensureRound(userId, "处方审核");
+  const loaded = await loadQuestionViews(userId, [ids[index]]);
+  const [question] = await toRoundQuestions(round, loaded);
   const result: PrescriptionResponse = {
     index: index + 1,
     totalQuestions: ids.length,
-    previousId: ids[index - 1]?.id ?? null,
-    nextId: ids[index + 1]?.id ?? null,
-    question: loaded[0],
+    previousId: ids[index - 1] ?? null,
+    nextId: ids[index + 1] ?? null,
+    round: await roundSummary(round),
+    question,
+  };
+  return c.json(result);
+});
+
+study.post("/rounds/questions/:id/answer", async (c) => {
+  const questionId = Number(c.req.param("id"));
+  const body = await readJsonBody(c.req.raw);
+  const answer = Number.isInteger(questionId) ? readAnswer(body) : null;
+  if (!answer) {
+    return c.json({ error: "答案格式不正确" }, 400);
+  }
+  const row = await db
+    .select({ question: questions, tag: questionTags.tag })
+    .from(questions)
+    .innerJoin(questionTags, eq(questionTags.questionId, questions.id))
+    .where(
+      and(eq(questions.id, questionId), inArray(questionTags.tag, SCOPES)),
+    )
+    .get();
+  if (!row || !isScope(row.tag)) {
+    return c.json({ error: "题目不存在" }, 404);
+  }
+  const question = row.question;
+  if (!answer.length || (question.kind !== "Checkbox" && answer.length !== 1)) {
+    return c.json({ error: "请先完成作答" }, 400);
+  }
+  const options = parseStringArray(question.optionsJson);
+  if (question.kind !== "FillBlank" && answer.some((item) => !options.includes(item))) {
+    return c.json({ error: "答案不在可选项中" }, 400);
+  }
+
+  const userId = c.get("user").id;
+  const round = ensureRound(userId, row.tag);
+  if (round.status !== "active") {
+    return c.json({ error: "本轮已完成，请先开启下一轮" }, 409);
+  }
+
+  const answerJson = JSON.stringify(answer);
+  const correctAnswers = parseStringArray(question.correctAnswerJson);
+  const isCorrect =
+    question.kind === "FillBlank"
+      ? null
+      : isAnswerCorrect(answer, correctAnswers);
+  let attemptId = 0;
+  let duplicate = false;
+  db.transaction((tx) => {
+    const existing = tx
+      .select({ questionId: roundAnswers.questionId })
+      .from(roundAnswers)
+      .where(
+        and(
+          eq(roundAnswers.roundId, round.id),
+          eq(roundAnswers.questionId, questionId),
+        ),
+      )
+      .get();
+    if (existing) {
+      duplicate = true;
+      return;
+    }
+    const now = Date.now();
+    const attempt = tx
+      .insert(attempts)
+      .values({
+        userId,
+        questionId,
+        answerJson,
+        isCorrect,
+        ...(isCorrect === null ? {} : { assessedAt: now }),
+      })
+      .returning({ id: attempts.id })
+      .get();
+    attemptId = attempt.id;
+    tx.insert(roundAnswers)
+      .values({
+        roundId: round.id,
+        questionId,
+        attemptId,
+        answerJson,
+        isCorrect,
+        answeredAt: now,
+      })
+      .run();
+    if (isCorrect !== null) {
+      updateQuestionState(tx, userId, questionId, answerJson, isCorrect);
+      completeRoundIfDone(tx, round.id, round.scope, now);
+    }
+  });
+  if (duplicate) {
+    return c.json({ error: "本轮该题已经作答" }, 409);
+  }
+  const result: AttemptResponse = {
+    attemptId,
+    isCorrect,
+    history: await getHistory(userId, questionId),
+    correctAnswers,
+    analysisText: question.analysisText,
+  };
+  return c.json(result, 201);
+});
+
+study.post("/rounds/start", async (c) => {
+  const body = await readJsonBody(c.req.raw);
+  if (!isScope(body.scope)) {
+    return c.json({ error: "题库范围不正确" }, 400);
+  }
+  const userId = c.get("user").id;
+  const current = ensureRound(userId, body.scope);
+  if (current.status !== "completed") {
+    return c.json({ error: "当前轮次尚未完成，刷完全部题目后才能开启下一轮" }, 409);
+  }
+  const round = db
+    .insert(studyRounds)
+    .values({
+      userId,
+      scope: body.scope,
+      roundNo: current.roundNo + 1,
+      createdAt: Date.now(),
+    })
+    .returning()
+    .get();
+  return c.json(await roundSummary(round), 201);
+});
+
+async function scopeRoundsOverview(
+  userId: number,
+  scope: QuestionScope,
+): Promise<RoundScopeOverview> {
+  ensureRound(userId, scope);
+  const roundRows = await db
+    .select()
+    .from(studyRounds)
+    .where(and(eq(studyRounds.userId, userId), eq(studyRounds.scope, scope)))
+    .orderBy(asc(studyRounds.roundNo));
+  const rounds = await Promise.all(roundRows.map((round) => roundSummary(round)));
+
+  const wrongRows = await db
+    .select({
+      questionId: roundAnswers.questionId,
+      roundNo: studyRounds.roundNo,
+    })
+    .from(roundAnswers)
+    .innerJoin(studyRounds, eq(studyRounds.id, roundAnswers.roundId))
+    .where(
+      and(
+        eq(studyRounds.userId, userId),
+        eq(studyRounds.scope, scope),
+        eq(roundAnswers.isCorrect, false),
+      ),
+    );
+  const wrongByQuestion = new Map<number, number[]>();
+  for (const row of wrongRows) {
+    const list = wrongByQuestion.get(row.questionId) ?? [];
+    list.push(row.roundNo);
+    wrongByQuestion.set(row.questionId, list);
+  }
+  const repeatedIds = [...wrongByQuestion.entries()]
+    .filter(([, roundNos]) => roundNos.length >= 2)
+    .sort((a, b) => b[1].length - a[1].length || a[0] - b[0])
+    .slice(0, 100)
+    .map(([questionId]) => questionId);
+  let repeatedWrong: RepeatedWrongQuestion[] = [];
+  if (repeatedIds.length) {
+    const scopeIds = scope === "技能" ? await scopeQuestionIds(scope) : [];
+    const questionRows = await db
+      .select({ id: questions.id, kind: questions.kind, stem: questions.stem })
+      .from(questions)
+      .where(inArray(questions.id, repeatedIds));
+    const byId = new Map(questionRows.map((row) => [row.id, row]));
+    repeatedWrong = repeatedIds.flatMap((id) => {
+      const question = byId.get(id);
+      if (!question) return [];
+      const position = scopeIds.indexOf(id);
+      return [{
+        id,
+        kind: question.kind as QuestionKind,
+        stem: question.stem,
+        wrongRounds: [...new Set(wrongByQuestion.get(id))].sort((a, b) => a - b),
+        group: position >= 0 ? Math.floor(position / GROUP_SIZE) + 1 : null,
+      }];
+    });
+  }
+  return { scope, rounds, repeatedWrong };
+}
+
+study.get("/rounds/overview", async (c) => {
+  const userId = c.get("user").id;
+  const result: RoundsOverviewResponse = {
+    skill: await scopeRoundsOverview(userId, "技能"),
+    prescription: await scopeRoundsOverview(userId, "处方审核"),
+  };
+  return c.json(result);
+});
+
+study.get("/rounds/:id/questions", async (c) => {
+  const roundId = Number(c.req.param("id"));
+  if (!Number.isInteger(roundId)) {
+    return c.json({ error: "轮次不存在" }, 404);
+  }
+  const userId = c.get("user").id;
+  const round = await db.query.studyRounds.findFirst({
+    where: and(eq(studyRounds.id, roundId), eq(studyRounds.userId, userId)),
+  });
+  if (!round) {
+    return c.json({ error: "轮次不存在" }, 404);
+  }
+  const ids = await scopeQuestionIds(round.scope);
+  const totalPages = Math.max(1, Math.ceil(ids.length / GROUP_SIZE));
+  const page = Math.min(totalPages, Math.max(1, Number(c.req.query("page")) || 1));
+  const pageIds = ids.slice((page - 1) * GROUP_SIZE, page * GROUP_SIZE);
+  const views = await loadQuestionViews(userId, pageIds);
+  const result: RoundArchiveResponse = {
+    round: await roundSummary(round),
+    scope: round.scope,
+    page,
+    pageSize: GROUP_SIZE,
+    totalPages,
+    questions: await toRoundQuestions(round, views),
   };
   return c.json(result);
 });
@@ -687,12 +735,10 @@ study.get("/prescriptions/:id?", async (c) => {
 study.post("/questions/:id/attempt", async (c) => {
   const questionId = Number(c.req.param("id"));
   const body = await readJsonBody(c.req.raw);
-  if (!Number.isInteger(questionId) || !Array.isArray(body.answer)) {
+  const answer = Number.isInteger(questionId) ? readAnswer(body) : null;
+  if (!answer) {
     return c.json({ error: "答案格式不正确" }, 400);
   }
-  const answer = body.answer.filter(
-    (item): item is string => typeof item === "string" && item.trim().length > 0,
-  );
   const question = await db.query.questions.findFirst({
     where: eq(questions.id, questionId),
   });
@@ -730,14 +776,11 @@ study.post("/questions/:id/attempt", async (c) => {
     return c.json(result, 201);
   }
 
-  const normalize = (items: string[]) => [...new Set(items)].sort();
-  const submitted = normalize(answer);
-  const expected = normalize(correctAnswers);
-  const isCorrect =
-    submitted.length === expected.length &&
-    submitted.every((item, index) => item === expected[index]);
+  const isCorrect = isAnswerCorrect(answer, correctAnswers);
+  const withFsrs = c.req.query("channel") === "review";
   let attemptId = 0;
   db.transaction((tx) => {
+    const now = Date.now();
     const inserted = tx
       .insert(attempts)
       .values({
@@ -745,12 +788,22 @@ study.post("/questions/:id/attempt", async (c) => {
         questionId,
         answerJson,
         isCorrect,
-        assessedAt: Date.now(),
+        assessedAt: now,
       })
       .returning({ id: attempts.id })
       .all();
     attemptId = inserted[0].id;
     updateQuestionState(tx, userId, questionId, answerJson, isCorrect);
+    if (withFsrs && !isCorrect) {
+      scheduleQuestion(tx, {
+        userId,
+        questionId,
+        roundItemId: null,
+        attemptId,
+        rating: Rating.Again,
+        now,
+      });
+    }
   });
   const result: AttemptResponse = {
     attemptId,
@@ -759,6 +812,46 @@ study.post("/questions/:id/attempt", async (c) => {
     ...solution,
   };
   return c.json(result, 201);
+});
+
+study.post("/review/attempts/:id/rating", async (c) => {
+  const attemptId = Number(c.req.param("id"));
+  const body = await readJsonBody(c.req.raw);
+  const rating = body.rating === "hard"
+    ? Rating.Hard
+    : body.rating === "good"
+      ? Rating.Good
+      : null;
+  if (!Number.isInteger(attemptId) || rating === null) {
+    return c.json({ error: "掌握程度不正确" }, 400);
+  }
+  const userId = c.get("user").id;
+  const attempt = await db.query.attempts.findFirst({
+    where: and(eq(attempts.id, attemptId), eq(attempts.userId, userId)),
+  });
+  if (!attempt) {
+    return c.json({ error: "作答记录不存在" }, 404);
+  }
+  if (attempt.isCorrect !== true) {
+    return c.json({ error: "只有答对的题目可以确认掌握程度" }, 409);
+  }
+  const rated = await db.query.fsrsReviewLogs.findFirst({
+    where: eq(fsrsReviewLogs.attemptId, attemptId),
+  });
+  if (rated) {
+    return c.json({ error: "该题已经完成评分" }, 409);
+  }
+  db.transaction((tx) => {
+    scheduleQuestion(tx, {
+      userId,
+      questionId: attempt.questionId,
+      roundItemId: null,
+      attemptId,
+      rating,
+      now: Date.now(),
+    });
+  });
+  return c.json({ rating: body.rating });
 });
 
 study.post("/attempts/:id/assess", async (c) => {
@@ -780,9 +873,10 @@ study.post("/attempts/:id/assess", async (c) => {
   }
 
   const changed = db.transaction((tx) => {
+    const now = Date.now();
     const updated = tx
       .update(attempts)
-      .set({ isCorrect, assessedAt: Date.now() })
+      .set({ isCorrect, assessedAt: now })
       .where(and(eq(attempts.id, attemptId), isNull(attempts.isCorrect)))
       .returning({ id: attempts.id })
       .all();
@@ -794,6 +888,33 @@ study.post("/attempts/:id/assess", async (c) => {
       attempt.answerJson,
       isCorrect,
     );
+    const roundRow = tx
+      .select({
+        roundId: roundAnswers.roundId,
+        questionId: roundAnswers.questionId,
+        scope: studyRounds.scope,
+      })
+      .from(roundAnswers)
+      .innerJoin(studyRounds, eq(studyRounds.id, roundAnswers.roundId))
+      .where(
+        and(
+          eq(roundAnswers.attemptId, attemptId),
+          eq(studyRounds.userId, userId),
+        ),
+      )
+      .get();
+    if (roundRow) {
+      tx.update(roundAnswers)
+        .set({ isCorrect })
+        .where(
+          and(
+            eq(roundAnswers.roundId, roundRow.roundId),
+            eq(roundAnswers.questionId, roundRow.questionId),
+          ),
+        )
+        .run();
+      completeRoundIfDone(tx, roundRow.roundId, roundRow.scope, now);
+    }
     return true;
   });
   if (!changed) {
@@ -933,10 +1054,31 @@ study.get("/dashboard", async (c) => {
   const progress = await db.query.userProgress.findFirst({
     where: eq(userProgress.userId, userId),
   });
+  const [reviewRow] = await db.all<{
+    due: number;
+    stableMastered: number;
+    wrongUnmastered: number;
+  }>(sql`
+    SELECT
+      (SELECT COUNT(*) FROM fsrs_cards WHERE user_id = ${userId} AND due <= ${now}) AS due,
+      (SELECT COUNT(*) FROM fsrs_cards WHERE user_id = ${userId} AND stability >= ${FSRS_STABLE_DAYS} AND due > ${now}) AS stableMastered,
+      (SELECT COUNT(*) FROM question_states qs
+       WHERE qs.user_id = ${userId} AND qs.mastered = 0
+         AND EXISTS (
+           SELECT 1 FROM attempts a
+           WHERE a.user_id = ${userId} AND a.question_id = qs.question_id AND a.is_correct = 0
+         )) AS wrongUnmastered
+  `);
   const result: DashboardResponse = {
     skill: await scopeStats(userId, "技能"),
     prescription: await scopeStats(userId, "处方审核"),
-    skillValidation: await validationStats(userId, now),
+    skillRound: await roundSummary(ensureRound(userId, "技能")),
+    prescriptionRound: await roundSummary(ensureRound(userId, "处方审核")),
+    review: {
+      due: Number(reviewRow?.due ?? 0),
+      stableMastered: Number(reviewRow?.stableMastered ?? 0),
+      wrongUnmastered: Number(reviewRow?.wrongUnmastered ?? 0),
+    },
     progress: {
       lastSkillGroup: progress?.lastSkillGroup ?? 1,
       lastSkillQuestionId: progress?.lastSkillQuestionId ?? null,
@@ -1033,19 +1175,39 @@ study.get("/review", async (c) => {
   const mode = c.req.query("mode");
   const scope = c.req.query("scope") as QuestionScope;
   const status = c.req.query("status") ?? "unmastered";
-  if (!['wrong', 'favorite'].includes(mode ?? '') || !['技能', '处方审核'].includes(scope)) {
+  const roundFilter = c.req.query("round") ?? "all";
+  if (!["wrong", "favorite"].includes(mode ?? "") || !isScope(scope)) {
     return c.json({ error: "复习筛选不正确" }, 400);
   }
+  const now = Date.now();
   const conditions = [eq(questionTags.tag, scope)];
   if (mode === "favorite") {
     conditions.push(isNotNull(favorites.questionId));
   } else {
-    conditions.push(eq(questionStates.firstAttemptCorrect, false));
+    conditions.push(
+      sql`EXISTS (
+        SELECT 1 FROM attempts wrong_attempt
+        WHERE wrong_attempt.user_id = ${userId}
+          AND wrong_attempt.question_id = ${questions.id}
+          AND wrong_attempt.is_correct = 0
+      )`,
+    );
     if (status === "unmastered") conditions.push(eq(questionStates.mastered, false));
     if (status === "mastered") conditions.push(eq(questionStates.mastered, true));
+    if (roundFilter === "current") {
+      const round = ensureRound(userId, scope);
+      conditions.push(
+        sql`EXISTS (
+          SELECT 1 FROM round_answers ra
+          WHERE ra.round_id = ${round.id}
+            AND ra.question_id = ${questions.id}
+            AND ra.is_correct = 0
+        )`,
+      );
+    }
   }
   const rows = await db
-    .select({ id: questions.id })
+    .select({ id: questions.id, due: fsrsCards.due })
     .from(questions)
     .innerJoin(questionTags, eq(questionTags.questionId, questions.id))
     .leftJoin(
@@ -1056,9 +1218,26 @@ study.get("/review", async (c) => {
       favorites,
       and(eq(favorites.questionId, questions.id), eq(favorites.userId, userId)),
     )
+    .leftJoin(
+      fsrsCards,
+      and(eq(fsrsCards.questionId, questions.id), eq(fsrsCards.userId, userId)),
+    )
     .where(and(...conditions))
-    .orderBy(asc(questions.id));
-  return c.json(await loadQuestionViews(userId, rows.map((row) => row.id)));
+    .orderBy(
+      sql`CASE WHEN ${fsrsCards.due} IS NOT NULL AND ${fsrsCards.due} <= ${now} THEN 0 ELSE 1 END`,
+      sql`COALESCE(${fsrsCards.due}, 9007199254740991)`,
+      asc(questions.id),
+    );
+  const dueById = new Map(rows.map((row) => [row.id, row.due]));
+  const views = await loadQuestionViews(userId, rows.map((row) => row.id));
+  const result: ReviewResponse = {
+    dueCount: rows.filter((row) => row.due !== null && row.due <= now).length,
+    questions: views.map((view): ReviewQuestionView => ({
+      ...view,
+      due: dueById.get(view.id) ?? null,
+    })),
+  };
+  return c.json(result);
 });
 
 export default study;

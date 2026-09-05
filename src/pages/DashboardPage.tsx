@@ -1,15 +1,21 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   BookOpen,
   BrainCircuit,
   ClipboardCheck,
   Heart,
+  History,
   Search,
   TriangleAlert,
 } from "lucide-react";
 import { Link } from "react-router-dom";
-import type { DashboardResponse, ScopeStats } from "../../shared/types";
+import type {
+  DashboardResponse,
+  QuestionScope,
+  RoundSummary,
+  ScopeStats,
+} from "../../shared/types";
 import { Loading } from "../components/Loading";
 import { api, errorMessage } from "../lib/api";
 
@@ -17,38 +23,72 @@ function ScopePanel({
   title,
   icon: Icon,
   stats,
+  round,
+  scope,
   continueTo,
   accent,
 }: {
   title: string;
   icon: typeof BookOpen;
   stats: ScopeStats;
+  round: RoundSummary;
+  scope: QuestionScope;
   continueTo: string;
   accent: "green" | "coral";
 }) {
-  const progress = stats.total ? Math.round((stats.answered / stats.total) * 100) : 0;
+  const queryClient = useQueryClient();
+  const startRound = useMutation({
+    mutationFn: () =>
+      api<RoundSummary>("/rounds/start", {
+        method: "POST",
+        body: JSON.stringify({ scope }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      void queryClient.invalidateQueries({ queryKey: ["skills"] });
+      void queryClient.invalidateQueries({ queryKey: ["prescription"] });
+      void queryClient.invalidateQueries({ queryKey: ["rounds"] });
+    },
+  });
+  const progress = round.total ? Math.round((round.answered / round.total) * 100) : 0;
   return (
     <article className={`scope-panel ${accent}`}>
       <header>
         <span className="scope-icon"><Icon aria-hidden="true" /></span>
         <div>
           <h2>{title}</h2>
-          <p>{stats.answered} / {stats.total} 题已作答</p>
+          <p>第 {round.roundNo} 轮 · {round.answered} / {round.total} 题已作答</p>
         </div>
         <strong>{progress}%</strong>
       </header>
-      <div className="progress-track" aria-label={`完成进度 ${progress}%`}>
+      <div className="progress-track" aria-label={`本轮进度 ${progress}%`}>
         <span style={{ width: `${progress}%` }} />
       </div>
       <dl className="metrics">
-        <div><dt>首次正确率</dt><dd>{stats.firstAccuracy}%</dd></div>
+        <div><dt>本轮正确率</dt><dd>{round.accuracy}%</dd></div>
         <div><dt>当前掌握</dt><dd>{stats.mastered}</dd></div>
         <div><dt>待巩固</dt><dd>{stats.unmastered}</dd></div>
         <div><dt>已收藏</dt><dd>{stats.favorites}</dd></div>
       </dl>
-      <Link className="panel-link" to={continueTo}>
-        继续复习 <ArrowRight aria-hidden="true" />
-      </Link>
+      {round.status === "completed" ? (
+        <button
+          className="primary-button"
+          type="button"
+          disabled={startRound.isPending}
+          onClick={() => {
+            if (window.confirm(`第 ${round.roundNo} 轮已完成，确定开启第 ${round.roundNo + 1} 轮吗？`)) {
+              startRound.mutate();
+            }
+          }}
+        >
+          {startRound.isPending ? "开启中..." : `开启第 ${round.roundNo + 1} 轮`}
+        </button>
+      ) : (
+        <Link className="panel-link" to={continueTo}>
+          继续复习 <ArrowRight aria-hidden="true" />
+        </Link>
+      )}
+      {startRound.isError && <p className="form-error">{errorMessage(startRound.error)}</p>}
     </article>
   );
 }
@@ -61,7 +101,7 @@ export function DashboardPage({ userId }: { userId: number }) {
   if (dashboard.isPending) return <Loading label="正在整理复习进度" />;
   if (dashboard.isError) return <p className="page-error">{errorMessage(dashboard.error)}</p>;
 
-  const { skill, prescription, skillValidation, progress } = dashboard.data;
+  const { skill, prescription, skillRound, prescriptionRound, review, progress } = dashboard.data;
   const skillTarget = `/skills/${progress.lastSkillGroup}${
     progress.lastSkillQuestionId ? `#question-${progress.lastSkillQuestionId}` : ""
   }`;
@@ -82,6 +122,8 @@ export function DashboardPage({ userId }: { userId: number }) {
           title="技能题库"
           icon={BookOpen}
           stats={skill}
+          round={skillRound}
+          scope="技能"
           continueTo={skillTarget}
           accent="green"
         />
@@ -89,31 +131,33 @@ export function DashboardPage({ userId }: { userId: number }) {
           title="处方审核"
           icon={ClipboardCheck}
           stats={prescription}
+          round={prescriptionRound}
+          scope="处方审核"
           continueTo={prescriptionTarget}
           accent="coral"
         />
       </section>
-      <section className="validation-panel" aria-label="技能验证进度">
+      <section className="validation-panel" aria-label="每日复习">
         <header>
           <span className="scope-icon"><BrainCircuit aria-hidden="true" /></span>
           <div>
-            <h2>技能随机验证</h2>
-            <p>按记忆状态安排到期题目</p>
+            <h2>每日复习</h2>
+            <p>错题按记忆状态排序，到期优先</p>
           </div>
         </header>
         <dl className="validation-metrics">
-          <div><dt>验证次数</dt><dd>{skillValidation.reviewed}</dd></div>
-          <div><dt>验证正确率</dt><dd>{skillValidation.accuracy}%</dd></div>
-          <div><dt>当前到期</dt><dd>{skillValidation.due}</dd></div>
-          <div><dt>稳定掌握</dt><dd>{skillValidation.stableMastered}</dd></div>
+          <div><dt>今日到期</dt><dd>{review.due}</dd></div>
+          <div><dt>待巩固错题</dt><dd>{review.wrongUnmastered}</dd></div>
+          <div><dt>稳定掌握</dt><dd>{review.stableMastered}</dd></div>
         </dl>
-        <Link className="panel-link" to="/skills/random">
-          开始验证 <ArrowRight aria-hidden="true" />
+        <Link className="panel-link" to="/review/wrong">
+          开始复习 <ArrowRight aria-hidden="true" />
         </Link>
       </section>
       <section className="quick-section">
         <h2>专项复习</h2>
         <div className="quick-links">
+          <Link to="/rounds"><History aria-hidden="true" /><span>轮次历史</span><ArrowRight /></Link>
           <Link to="/review/wrong"><TriangleAlert aria-hidden="true" /><span>错题复习</span><ArrowRight /></Link>
           <Link to="/review/favorite"><Heart aria-hidden="true" /><span>收藏题目</span><ArrowRight /></Link>
           <Link to="/search"><Search aria-hidden="true" /><span>搜索题库</span><ArrowRight /></Link>

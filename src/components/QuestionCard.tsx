@@ -28,7 +28,7 @@ const kindLabels = {
 function refreshStudyData(queryClient: ReturnType<typeof useQueryClient>) {
   void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
   void queryClient.invalidateQueries({ queryKey: ["skills"] });
-  void queryClient.invalidateQueries({ queryKey: ["skill-random"] });
+  void queryClient.invalidateQueries({ queryKey: ["rounds"] });
   void queryClient.invalidateQueries({ queryKey: ["prescription"] });
   void queryClient.invalidateQueries({ queryKey: ["review"] });
   void queryClient.invalidateQueries({ queryKey: ["search"] });

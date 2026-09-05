@@ -205,9 +205,10 @@ export const fsrsReviewLogs = sqliteTable(
     questionId: integer("question_id")
       .notNull()
       .references(() => questions.id, { onDelete: "cascade" }),
-    roundItemId: integer("round_item_id")
-      .notNull()
-      .references(() => validationRoundItems.id, { onDelete: "cascade" }),
+    roundItemId: integer("round_item_id").references(
+      () => validationRoundItems.id,
+      { onDelete: "cascade" },
+    ),
     attemptId: integer("attempt_id")
       .notNull()
       .references(() => attempts.id, { onDelete: "cascade" }),
@@ -227,6 +228,52 @@ export const fsrsReviewLogs = sqliteTable(
       table.userId,
       table.questionId,
     ),
+  ],
+);
+
+export const studyRounds = sqliteTable(
+  "study_rounds",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    scope: text("scope", { enum: ["技能", "处方审核"] }).notNull(),
+    roundNo: integer("round_no").notNull(),
+    status: text("status", { enum: ["active", "completed"] })
+      .notNull()
+      .default("active"),
+    createdAt: integer("created_at").notNull().default(now),
+    completedAt: integer("completed_at"),
+  },
+  (table) => [
+    uniqueIndex("study_rounds_user_scope_no_unique").on(
+      table.userId,
+      table.scope,
+      table.roundNo,
+    ),
+  ],
+);
+
+export const roundAnswers = sqliteTable(
+  "round_answers",
+  {
+    roundId: integer("round_id")
+      .notNull()
+      .references(() => studyRounds.id, { onDelete: "cascade" }),
+    questionId: integer("question_id")
+      .notNull()
+      .references(() => questions.id, { onDelete: "cascade" }),
+    attemptId: integer("attempt_id").references(() => attempts.id, {
+      onDelete: "set null",
+    }),
+    answerJson: text("answer_json").notNull(),
+    isCorrect: integer("is_correct", { mode: "boolean" }),
+    answeredAt: integer("answered_at").notNull().default(now),
+  },
+  (table) => [
+    primaryKey({ columns: [table.roundId, table.questionId] }),
+    index("round_answers_attempt_idx").on(table.attemptId),
   ],
 );
 

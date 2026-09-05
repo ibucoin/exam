@@ -1,8 +1,13 @@
 import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Shuffle } from "lucide-react";
+import { ChevronLeft, ChevronRight, History } from "lucide-react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import type { DashboardResponse, SkillGroupResponse } from "../../shared/types";
+import type {
+  AttemptResponse,
+  DashboardResponse,
+  RoundQuestionView,
+  SkillGroupResponse,
+} from "../../shared/types";
 import { Loading } from "../components/Loading";
 import { QuestionCard } from "../components/QuestionCard";
 import { api, errorMessage } from "../lib/api";
@@ -15,6 +20,16 @@ export function SkillRedirect({ userId }: { userId: number }) {
   if (dashboard.isPending) return <Loading />;
   if (dashboard.isError) return <p className="page-error">{errorMessage(dashboard.error)}</p>;
   return <Navigate to={`/skills/${dashboard.data.progress.lastSkillGroup}`} replace />;
+}
+
+export function toRoundResult(question: RoundQuestionView): AttemptResponse | null {
+  if (!question.roundAnswer || !question.solution) return null;
+  return {
+    attemptId: question.roundAnswer.attemptId,
+    isCorrect: question.roundAnswer.isCorrect,
+    history: question.history,
+    ...question.solution,
+  };
 }
 
 export function SkillGroupPage() {
@@ -51,7 +66,7 @@ export function SkillGroupPage() {
   if (groupQuery.isError) return <p className="page-error">{errorMessage(groupQuery.error)}</p>;
 
   const data = groupQuery.data;
-  const answered = data.questions.filter((question) => question.history).length;
+  const answered = data.questions.filter((question) => question.roundAnswer).length;
   const scrollToQuestion = (id: number) => {
     document.getElementById(`question-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
     saveProgress.mutate(id);
@@ -61,12 +76,15 @@ export function SkillGroupPage() {
     <div className="study-page">
       <header className="study-heading">
         <div>
-          <p className="eyebrow">技能题库</p>
+          <p className="eyebrow">技能题库 · 第 {data.round.roundNo} 轮</p>
           <h1>第 {data.group} 组</h1>
-          <p>本组已作答 {answered} / {data.questions.length}</p>
+          <p>
+            本组已作答 {answered} / {data.questions.length} · 本轮 {data.round.answered} /{" "}
+            {data.round.total}，正确率 {data.round.accuracy}%
+          </p>
         </div>
         <div className="study-heading-actions">
-          <Link className="secondary-button" to="/skills/random"><Shuffle />随机验证</Link>
+          <Link className="secondary-button" to="/rounds"><History />轮次历史</Link>
           <div className="group-switcher">
             <Link
               className={`icon-button ${data.group === 1 ? "disabled" : ""}`}
@@ -76,9 +94,18 @@ export function SkillGroupPage() {
             <label>
               <span className="sr-only">选择题组</span>
               <select value={data.group} onChange={(event) => navigate(`/skills/${event.target.value}`)}>
-                {Array.from({ length: data.totalGroups }, (_, index) => (
-                  <option value={index + 1} key={index + 1}>第 {index + 1} 组</option>
-                ))}
+                {Array.from({ length: data.totalGroups }, (_, index) => {
+                  const size = Math.min(
+                    data.groupSize,
+                    data.totalQuestions - index * data.groupSize,
+                  );
+                  const remaining = size - (data.groupAnswered[index] ?? 0);
+                  return (
+                    <option value={index + 1} key={index + 1}>
+                      第 {index + 1} 组 {remaining ? `剩 ${remaining}/${size}` : "✓"}
+                    </option>
+                  );
+                })}
               </select>
             </label>
             <Link
@@ -94,8 +121,8 @@ export function SkillGroupPage() {
           <button
             type="button"
             key={question.id}
-            className={`${question.history ? "answered" : ""} ${
-              question.history && !question.history.mastered ? "wrong" : ""
+            className={`${question.roundAnswer ? "answered" : ""} ${
+              question.roundAnswer?.isCorrect === false ? "wrong" : ""
             }`}
             onClick={() => scrollToQuestion(question.id)}
           >
@@ -106,9 +133,19 @@ export function SkillGroupPage() {
       <section className="question-list">
         {data.questions.map((question, index) => (
           <QuestionCard
-            key={question.id}
+            key={`${data.round.id}-${question.id}`}
             question={question}
             number={index + 1}
+            freshAttempt={!question.roundAnswer}
+            initialAnswer={question.roundAnswer?.answer ?? null}
+            initialResult={toRoundResult(question)}
+            allowRetry={false}
+            submitAnswer={(answer) =>
+              api<AttemptResponse>(`/rounds/questions/${question.id}/answer`, {
+                method: "POST",
+                body: JSON.stringify({ answer }),
+              })
+            }
             onAnswered={(id) => saveProgress.mutate(id)}
           />
         ))}

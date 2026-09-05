@@ -11,9 +11,9 @@ import { LoginPage } from "./pages/LoginPage";
 import { PasswordPage } from "./pages/PasswordPage";
 import { PrescriptionPage } from "./pages/PrescriptionPage";
 import { ReviewPage } from "./pages/ReviewPage";
+import { RoundArchivePage, RoundsPage } from "./pages/RoundsPage";
 import { SearchPage } from "./pages/SearchPage";
 import { SkillGroupPage, SkillRedirect } from "./pages/SkillGroupPage";
-import { SkillRandomPage } from "./pages/SkillRandomPage";
 
 export default function App() {
   const currentUser = useQuery({
@@ -41,8 +41,9 @@ export default function App() {
       <Route element={<AppShell user={currentUser.data} />}>
         <Route index element={<DashboardPage userId={currentUser.data.id} />} />
         <Route path="skills" element={<SkillRedirect userId={currentUser.data.id} />} />
-        <Route path="skills/random" element={<SkillRandomPage />} />
         <Route path="skills/:group" element={<SkillGroupPage />} />
+        <Route path="rounds" element={<RoundsPage />} />
+        <Route path="rounds/:id" element={<RoundArchivePage />} />
         <Route path="prescriptions" element={<PrescriptionPage />} />
         <Route path="prescriptions/:id" element={<PrescriptionPage />} />
         <Route path="review/:mode" element={<ReviewPage />} />
