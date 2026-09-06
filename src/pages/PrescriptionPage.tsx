@@ -50,6 +50,14 @@ export function PrescriptionPage() {
             共 {data.totalQuestions} 道案例 · 本轮 {data.round.answered} /{" "}
             {data.round.total}，正确率 {data.round.accuracy}%
           </p>
+          {data.round.firstPendingAssessId !== null && (
+            <p className="round-pending-assess">
+              还有 {data.round.pendingAssess} 道已作答但未自评，自评后本轮才算完成
+              {data.round.firstPendingAssessId !== question.id && (
+                <Link to={`/prescriptions/${data.round.firstPendingAssessId}`}>去自评</Link>
+              )}
+            </p>
+          )}
         </div>
         <form
           className="jump-form"

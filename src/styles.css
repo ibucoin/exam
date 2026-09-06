@@ -267,6 +267,8 @@ button:disabled, .disabled { opacity: 0.45; pointer-events: none; cursor: not-al
 .note-actions > span:first-child { color: var(--muted); font-size: 12px; }
 .study-footer, .pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 26px; }
 .prescription-page { max-width: 900px; margin: 0 auto; }
+.round-pending-assess { color: var(--danger) !important; font-size: 14px; margin-top: 4px !important; }
+.round-pending-assess a { margin-left: 8px; font-weight: 650; }
 .jump-form { display: flex; gap: 8px; }
 .jump-form input { width: 92px; }
 .prescription-navigation > span { color: var(--muted); }

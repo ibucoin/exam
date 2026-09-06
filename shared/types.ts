@@ -58,6 +58,8 @@ export interface RoundSummary {
   answered: number;
   correct: number;
   accuracy: number;
+  pendingAssess: number;
+  firstPendingAssessId: number | null;
   createdAt: number;
   completedAt: number | null;
 }

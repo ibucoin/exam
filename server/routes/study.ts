@@ -351,11 +351,19 @@ function ensureRound(userId: number, scope: QuestionScope): StudyRound {
 }
 
 async function roundSummary(round: StudyRound): Promise<RoundSummary> {
-  const [row] = await db.all<{ total: number; answered: number; correct: number }>(sql`
+  const [row] = await db.all<{
+    total: number;
+    answered: number;
+    correct: number;
+    pendingAssess: number;
+    firstPendingAssessId: number | null;
+  }>(sql`
     SELECT
       (SELECT COUNT(*) FROM question_tags WHERE tag = ${round.scope}) AS total,
-      (SELECT COUNT(*) FROM round_answers WHERE round_id = ${round.id}) AS answered,
-      (SELECT COUNT(*) FROM round_answers WHERE round_id = ${round.id} AND is_correct = 1) AS correct
+      (SELECT COUNT(*) FROM round_answers WHERE round_id = ${round.id} AND is_correct IS NOT NULL) AS answered,
+      (SELECT COUNT(*) FROM round_answers WHERE round_id = ${round.id} AND is_correct = 1) AS correct,
+      (SELECT COUNT(*) FROM round_answers WHERE round_id = ${round.id} AND is_correct IS NULL) AS pendingAssess,
+      (SELECT MIN(question_id) FROM round_answers WHERE round_id = ${round.id} AND is_correct IS NULL) AS firstPendingAssessId
   `);
   const answered = Number(row?.answered ?? 0);
   const correct = Number(row?.correct ?? 0);
@@ -367,6 +375,8 @@ async function roundSummary(round: StudyRound): Promise<RoundSummary> {
     answered,
     correct,
     accuracy: answered ? Math.round((correct / answered) * 1000) / 10 : 0,
+    pendingAssess: Number(row?.pendingAssess ?? 0),
+    firstPendingAssessId: row?.firstPendingAssessId ?? null,
     createdAt: round.createdAt,
     completedAt: round.completedAt,
   };
@@ -1060,7 +1070,10 @@ study.get("/dashboard", async (c) => {
     wrongUnmastered: number;
   }>(sql`
     SELECT
-      (SELECT COUNT(*) FROM fsrs_cards WHERE user_id = ${userId} AND due <= ${now}) AS due,
+      (SELECT COUNT(*) FROM fsrs_cards c
+       INNER JOIN question_states qs
+         ON qs.user_id = c.user_id AND qs.question_id = c.question_id
+       WHERE c.user_id = ${userId} AND c.due <= ${now} AND qs.mastered = 0) AS due,
       (SELECT COUNT(*) FROM fsrs_cards WHERE user_id = ${userId} AND stability >= ${FSRS_STABLE_DAYS} AND due > ${now}) AS stableMastered,
       (SELECT COUNT(*) FROM question_states qs
        WHERE qs.user_id = ${userId} AND qs.mastered = 0
@@ -1107,7 +1120,7 @@ study.get("/search", async (c) => {
   if (filter === "wrong") conditions.push(eq(questionStates.mastered, false));
   if (filter === "favorite") conditions.push(isNotNull(favorites.questionId));
 
-  const base = db
+  const rows = await db
     .select({
       id: questions.id,
       kind: questions.kind,
@@ -1119,6 +1132,7 @@ study.get("/search", async (c) => {
       mastered: questionStates.mastered,
       attemptCount: questionStates.attemptCount,
       lastAnswerJson: questionStates.lastAnswerJson,
+      total: sql<number>`COUNT(*) OVER ()`,
       group: sql<number | null>`CASE WHEN ${questionTags.tag} = '技能' THEN
         CAST(((SELECT COUNT(*) FROM questions q2 INNER JOIN question_tags qt2 ON qt2.question_id = q2.id WHERE qt2.tag = '技能' AND q2.id <= ${questions.id}) - 1) / ${GROUP_SIZE} AS INTEGER) + 1
         ELSE NULL END`,
@@ -1136,27 +1150,10 @@ study.get("/search", async (c) => {
       favorites,
       and(eq(favorites.questionId, questions.id), eq(favorites.userId, userId)),
     )
-    .where(and(...conditions));
-  const rows = await base
+    .where(and(...conditions))
     .orderBy(asc(questions.id))
     .limit(pageSize)
     .offset((page - 1) * pageSize);
-  const totalRows = await db
-    .select({ total: count() })
-    .from(questions)
-    .innerJoin(questionTags, eq(questionTags.questionId, questions.id))
-    .leftJoin(
-      questionStates,
-      and(
-        eq(questionStates.questionId, questions.id),
-        eq(questionStates.userId, userId),
-      ),
-    )
-    .leftJoin(
-      favorites,
-      and(eq(favorites.questionId, questions.id), eq(favorites.userId, userId)),
-    )
-    .where(and(...conditions));
   const results: SearchResult[] = rows.map((row) => ({
     id: row.id,
     kind: row.kind as QuestionKind,
@@ -1166,7 +1163,10 @@ study.get("/search", async (c) => {
     history: toHistory(row),
     group: row.group,
   }));
-  const response: SearchResponse = { results, total: totalRows[0]?.total ?? 0 };
+  const response: SearchResponse = {
+    results,
+    total: Number(rows[0]?.total ?? 0),
+  };
   return c.json(response);
 });
 
