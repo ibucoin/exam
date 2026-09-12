@@ -9,7 +9,7 @@ import { examItems, examPapers, questions, questionTags } from "../db/schema";
 import { isAnswerCorrect, parseStringArray } from "../lib/answers";
 import { type AppEnv, requireAuth } from "../lib/auth";
 import {
-  completedExams, EXAM_KINDS, type ExamPaper, examSummary, paperItems,
+  completedExams, EXAM_KINDS, EXAM_TOTAL, type ExamPaper, examSummary, paperItems,
   settleActiveExam, settleExam,
 } from "../lib/exam";
 import { readJsonBody } from "../lib/validation";
@@ -136,7 +136,7 @@ exam.post("/", async (c) => {
           ? shuffle(candidates).slice(0, total).map((question) => ({ ...question, kind }))
           : [];
       });
-      if (selected.length !== 50) return { paper: null, autoSubmittedId: null };
+      if (selected.length !== EXAM_TOTAL) return { paper: null, autoSubmittedId: null };
       const startedAt = Date.now();
       const paper = tx.insert(examPapers).values({
         userId, startedAt, deadline: startedAt + 20 * 60 * 1000, createdAt: startedAt,

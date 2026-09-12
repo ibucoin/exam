@@ -49,7 +49,7 @@ export function ExamsPage() {
       <ConfirmDialog
         open={confirming}
         title="确认开始考试？"
-        description="20 分钟 50 题，开始后计时不会暂停，中途离开也会继续走表。"
+        description="20 分钟 100 题，开始后计时不会暂停，中途离开也会继续走表。"
         confirmText="开始考试"
         onCancel={() => setConfirming(false)}
         onConfirm={() => {

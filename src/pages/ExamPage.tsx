@@ -2,17 +2,25 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Clock3, Send } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import type { ExamCurrentResponse, ExamQuestionView, ExamResultResponse } from "../../shared/types";
+import type { ExamCurrentResponse, ExamQuestionView, ExamResultResponse, ExamSummary } from "../../shared/types";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Loading } from "../components/Loading";
 import { ApiRequestError, api, errorMessage } from "../lib/api";
 
-const sections = [
-  { position: 1, title: "一、单选题（20 题，每题 2 分）" },
-  { position: 21, title: "二、多选题（20 题，每题 2 分）" },
-  { position: 41, title: "三、判断题（10 题，每题 2 分）" },
-];
 const kindLabels = { Radio: "单选题", Checkbox: "多选题", Judge: "判断题" };
+const sectionIndexes = ["一", "二", "三"];
+
+function examSections(breakdown: ExamSummary["breakdown"]) {
+  let position = 1;
+  return breakdown.map((row, index) => {
+    const section = {
+      position,
+      title: `${sectionIndexes[index] ?? index + 1}、${kindLabels[row.kind]}（${row.total} 题，每题 ${row.fullScore / row.total} 分）`,
+    };
+    position += row.total;
+    return section;
+  });
+}
 
 function ExamQuestion({ question, answer, unsaved, disabled, onChange }: {
   question: ExamQuestionView;
@@ -200,6 +208,7 @@ function ExamSession({ data, ended }: {
   };
   const seconds = Math.floor(remaining % 60);
   const minutes = Math.floor(remaining / 60);
+  const sections = examSections(exam.breakdown);
 
   return (
     <div className="study-page exam-active-page">
@@ -230,7 +239,7 @@ function ExamSession({ data, ended }: {
           return (
             <div key={question.id}>
               {section && <h2 className="exam-section-title">{section.title}</h2>}
-              <ExamQuestion question={question} answer={answers[question.id] ?? []} unsaved={pending.current.has(question.id)}
+              <ExamQuestion question={question} answer={answers[question.id] ?? []} unsaved={saveErrors[question.id] !== undefined}
                 disabled={submitting || remaining === 0 || ended} onChange={(answer) => updateAnswer(question, answer)} />
             </div>
           );
