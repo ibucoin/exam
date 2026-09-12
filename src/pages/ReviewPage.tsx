@@ -4,6 +4,7 @@ import { Check, ChevronLeft, ChevronRight, Heart, HelpCircle, TriangleAlert } fr
 import { Navigate, useParams } from "react-router-dom";
 import type {
   AttemptResponse,
+  ExamListResponse,
   QuestionScope,
   ReviewQuestionView,
   ReviewRatingResponse,
@@ -11,22 +12,32 @@ import type {
 import { EmptyState, Loading } from "../components/Loading";
 import { QuestionCard } from "../components/QuestionCard";
 import { api, errorMessage } from "../lib/api";
+import { examDate } from "../lib/exam";
 
 export function ReviewPage() {
   const { mode } = useParams();
   const [scope, setScope] = useState<QuestionScope>("技能");
   const [status, setStatus] = useState("unmastered");
   const [roundFilter, setRoundFilter] = useState("all");
+  const [source, setSource] = useState<"study" | "exam">("study");
+  const [examStatus, setExamStatus] = useState<"pending" | "all">("pending");
+  const [examFilter, setExamFilter] = useState("all");
+  const isExamWrong = mode === "wrong" && source === "exam";
+  const examList = useQuery({
+    queryKey: ["exams"],
+    queryFn: () => api<ExamListResponse>("/exams"),
+    enabled: isExamWrong,
+  });
   const [page, setPage] = useState(1);
   const [snapshot, setSnapshot] = useState<{ dueCount: number; questions: ReviewQuestionView[] } | null>(null);
   const [ratings, setRatings] = useState<Record<number, "hard" | "good">>({});
-  const pageSize = scope === "技能" ? 20 : 1;
+  const pageSize = isExamWrong || scope === "技能" ? 20 : 1;
   const review = useQuery({
-    queryKey: ["review", mode, scope, status, roundFilter],
+    queryKey: isExamWrong ? ["review", mode, "exam", examStatus, examFilter] : ["review", mode, scope, status, roundFilter],
     queryFn: () =>
-      api<{ dueCount: number; questions: ReviewQuestionView[] }>(
-        `/review?mode=${mode}&scope=${encodeURIComponent(scope)}&status=${status}&round=${roundFilter}`,
-      ),
+      api<{ dueCount: number; questions: ReviewQuestionView[] }>(isExamWrong
+        ? `/review?mode=wrong&source=exam&status=${examStatus}&exam=${examFilter}`
+        : `/review?mode=${mode}&scope=${encodeURIComponent(scope)}&status=${status}&round=${roundFilter}`),
     enabled: mode === "wrong" || mode === "favorite",
   });
   const rate = useMutation({
@@ -43,18 +54,18 @@ export function ReviewPage() {
   useEffect(() => {
     setPage(1);
     setSnapshot(null);
-  }, [scope, mode, status, roundFilter]);
+  }, [scope, mode, status, roundFilter, source, examStatus, examFilter]);
   useEffect(() => {
-    if (review.data && !snapshot) setSnapshot(review.data);
-  }, [review.data, snapshot]);
+    if (review.data && !snapshot && !isExamWrong) setSnapshot(review.data);
+  }, [review.data, snapshot, isExamWrong]);
 
   if (mode !== "wrong" && mode !== "favorite") return <Navigate to="/review/wrong" replace />;
-  if (!snapshot) {
+  if (isExamWrong || !snapshot) {
     if (review.isPending) return <Loading label="正在整理专项题目" />;
     if (review.isError) return <p className="page-error">{errorMessage(review.error)}</p>;
   }
 
-  const data = snapshot ?? review.data!;
+  const data = isExamWrong ? review.data! : snapshot ?? review.data!;
   const totalPages = Math.max(1, Math.ceil(data.questions.length / pageSize));
   const visible = data.questions.slice((page - 1) * pageSize, page * pageSize);
   const Icon = mode === "wrong" ? TriangleAlert : Heart;
@@ -68,7 +79,7 @@ export function ReviewPage() {
           <Icon aria-hidden="true" />
           <div><p className="eyebrow">专项复习</p><h1>{title}</h1></div>
         </div>
-        <div className="segmented-control" aria-label="选择题库">
+        {!isExamWrong && <div className="segmented-control" aria-label="选择题库">
           {(["技能", "处方审核"] as const).map((item) => (
             <button
               type="button"
@@ -78,14 +89,42 @@ export function ReviewPage() {
               key={item}
             >{item}</button>
           ))}
-        </div>
+        </div>}
       </header>
-      <div className="review-summary">
+      {isWrongMode && (
+        <div className="segmented-control exam-source-switch" aria-label="错题来源">
+          <button type="button" className={source === "study" ? "active" : ""} aria-pressed={source === "study"} onClick={() => setSource("study")}>刷题错题</button>
+          <button type="button" className={source === "exam" ? "active" : ""} aria-pressed={source === "exam"} onClick={() => setSource("exam")}>考试错题</button>
+        </div>
+      )}
+      <div className={`review-summary ${isExamWrong ? "exam-review-filters" : ""}`}>
         <p className="result-count">
           共 {data.questions.length} 道题
-          {isWrongMode && data.dueCount > 0 && ` · 今日到期 ${data.dueCount} 题`}
+          {isWrongMode && !isExamWrong && data.dueCount > 0 && ` · 今日到期 ${data.dueCount} 题`}
         </p>
-        {isWrongMode && (
+        {isExamWrong && (
+          <>
+            <label>
+              <span className="sr-only">考试错题状态</span>
+              <select value={examStatus} onChange={(event) => setExamStatus(event.target.value as "pending" | "all")}>
+                <option value="pending">待订正</option>
+                <option value="all">全部</option>
+              </select>
+            </label>
+            <label>
+              <span className="sr-only">考试场次</span>
+              <select value={examFilter} onChange={(event) => setExamFilter(event.target.value)}>
+                <option value="all">全部场次</option>
+                {examList.isPending && <option disabled>正在加载场次</option>}
+                {examList.data?.exams.map((exam) => (
+                  <option value={exam.id} key={exam.id}>{examDate(exam.submittedAt ?? exam.startedAt)} · {exam.score} 分</option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
+        {isExamWrong && examList.isError && <span className="form-error">{errorMessage(examList.error)}</span>}
+        {isWrongMode && !isExamWrong && (
           <>
             <label>
               <span className="sr-only">错题范围</span>
@@ -117,11 +156,13 @@ export function ReviewPage() {
                     freshAttempt: true,
                     allowRetry: false,
                     submitAnswer: (answer: string[]) =>
-                      api<AttemptResponse>(`/questions/${question.id}/attempt?channel=review`, {
+                      api<AttemptResponse>(isExamWrong
+                        ? `/exams/wrong-attempt/${question.id}`
+                        : `/questions/${question.id}/attempt?channel=review`, {
                         method: "POST",
                         body: JSON.stringify({ answer }),
                       }),
-                    renderResultActions: (result: AttemptResponse) => {
+                    renderResultActions: isExamWrong ? undefined : (result: AttemptResponse) => {
                       const lastAnswer = question.history?.lastAnswer ?? [];
                       const rated = ratings[result.attemptId];
                       return (
@@ -169,7 +210,7 @@ export function ReviewPage() {
           ))}
         </section>
       ) : (
-        <EmptyState>{isWrongMode ? "当前没有待巩固的题目" : "当前题库还没有收藏"}</EmptyState>
+        <EmptyState>{isExamWrong ? "当前没有待订正的考试错题" : isWrongMode ? "当前没有待巩固的题目" : "当前题库还没有收藏"}</EmptyState>
       )}
       {totalPages > 1 && (
         <footer className="pagination">

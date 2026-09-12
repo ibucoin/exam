@@ -44,6 +44,7 @@ export function QuestionCard({
   submitAnswer,
   allowRetry = true,
   hideNoteUntilAnswered = false,
+  renderAnswer,
   renderResultActions,
 }: {
   question: QuestionView;
@@ -55,6 +56,7 @@ export function QuestionCard({
   submitAnswer?: (answer: string[]) => Promise<AttemptResponse>;
   allowRetry?: boolean;
   hideNoteUntilAnswered?: boolean;
+  renderAnswer?: () => ReactNode;
   renderResultActions?: (result: AttemptResponse) => ReactNode;
 }) {
   const queryClient = useQueryClient();
@@ -177,6 +179,7 @@ export function QuestionCard({
       </header>
 
       <div className="question-stem">{question.stem}</div>
+      {renderAnswer?.()}
 
       {!result && question.kind === "FillBlank" && (
         <label className="answer-editor">

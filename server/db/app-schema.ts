@@ -277,6 +277,52 @@ export const roundAnswers = sqliteTable(
   ],
 );
 
+export const examPapers = sqliteTable(
+  "exam_papers",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    status: text("status", { enum: ["active", "completed"] })
+      .notNull()
+      .default("active"),
+    currentKey: integer("current_key", { mode: "boolean" }).default(true),
+    startedAt: integer("started_at").notNull(),
+    deadline: integer("deadline").notNull(),
+    submittedAt: integer("submitted_at"),
+    score: integer("score").notNull().default(0),
+    createdAt: integer("created_at").notNull().default(now),
+  },
+  (table) => [
+    uniqueIndex("exam_papers_user_current_unique").on(table.userId, table.currentKey),
+  ],
+);
+
+export const examItems = sqliteTable(
+  "exam_items",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    paperId: integer("paper_id")
+      .notNull()
+      .references(() => examPapers.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    questionId: integer("question_id")
+      .notNull()
+      .references(() => questions.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["Radio", "Checkbox", "Judge"] }).notNull(),
+    optionsJson: text("options_json").notNull(),
+    answerJson: text("answer_json").notNull().default("[]"),
+    isCorrect: integer("is_correct", { mode: "boolean" }),
+    correctedAt: integer("corrected_at"),
+  },
+  (table) => [
+    uniqueIndex("exam_items_position_unique").on(table.paperId, table.position),
+    uniqueIndex("exam_items_question_unique").on(table.paperId, table.questionId),
+    index("exam_items_paper_id_idx").on(table.paperId),
+  ],
+);
+
 export const userProgress = sqliteTable("user_progress", {
   userId: integer("user_id")
     .primaryKey()

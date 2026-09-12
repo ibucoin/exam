@@ -4,6 +4,7 @@ import {
   BookOpen,
   BrainCircuit,
   ClipboardCheck,
+  FileCheck2,
   Heart,
   History,
   Search,
@@ -18,6 +19,7 @@ import type {
 } from "../../shared/types";
 import { Loading } from "../components/Loading";
 import { api, errorMessage } from "../lib/api";
+import { examDate } from "../lib/exam";
 
 function ScopePanel({
   title,
@@ -101,7 +103,7 @@ export function DashboardPage({ userId }: { userId: number }) {
   if (dashboard.isPending) return <Loading label="正在整理复习进度" />;
   if (dashboard.isError) return <p className="page-error">{errorMessage(dashboard.error)}</p>;
 
-  const { skill, prescription, skillRound, prescriptionRound, review, progress } = dashboard.data;
+  const { skill, prescription, skillRound, prescriptionRound, review, progress, exam } = dashboard.data;
   const skillTarget = `/skills/${progress.lastSkillGroup}${
     progress.lastSkillQuestionId ? `#question-${progress.lastSkillQuestionId}` : ""
   }`;
@@ -153,6 +155,21 @@ export function DashboardPage({ userId }: { userId: number }) {
         <Link className="panel-link" to="/review/wrong">
           开始复习 <ArrowRight aria-hidden="true" />
         </Link>
+      </section>
+      <section className="exam-dashboard" aria-label="考试进度">
+        <header>
+          <span className="scope-icon"><FileCheck2 aria-hidden="true" /></span>
+          <div>
+            <h2>考试刷题</h2>
+            <p>{exam.lastScore === null ? "还没考过" : `最近一次 ${exam.lastScore} / 100 · ${examDate(exam.lastSubmittedAt!)}`}</p>
+          </div>
+        </header>
+        <dl className="exam-dashboard-metrics">
+          <div><dt>考试次数</dt><dd>{exam.count}</dd></div>
+          <div><dt>最高分</dt><dd>{exam.best} / 100</dd></div>
+          <div><dt>未订正考试错题</dt><dd>{exam.wrongPending}</dd></div>
+        </dl>
+        <Link className="panel-link" to="/exams">{exam.activeId ? "继续考试" : "开始考试"} <ArrowRight aria-hidden="true" /></Link>
       </section>
       <section className="quick-section">
         <h2>专项复习</h2>

@@ -35,6 +35,8 @@ import type {
 import { db } from "../db/client";
 import {
   attempts,
+  examItems,
+  examPapers,
   favorites,
   fsrsCards,
   fsrsReviewLogs,
@@ -46,7 +48,9 @@ import {
   studyRounds,
   userProgress,
 } from "../db/schema";
+import { isAnswerCorrect, parseStringArray } from "../lib/answers";
 import { type AppEnv, requireAuth } from "../lib/auth";
+import { examDashboard, settleActiveExam } from "../lib/exam";
 import { FSRS_STABLE_DAYS, Rating, scheduleQuestion } from "../lib/fsrs";
 import { readJsonBody } from "../lib/validation";
 
@@ -54,15 +58,6 @@ const GROUP_SIZE = 20;
 const SCOPES = ["技能", "处方审核"] as const;
 const study = new Hono<AppEnv>();
 study.use("*", requireAuth);
-
-function parseStringArray(value: string) {
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
-  } catch {
-    return [];
-  }
-}
 
 function toHistory(row: {
   firstAttemptCorrect: boolean | null;
@@ -89,7 +84,7 @@ function toHistory(row: {
   };
 }
 
-async function loadQuestionViews(userId: number, questionIds: number[]) {
+export async function loadQuestionViews(userId: number, questionIds: number[]) {
   if (!questionIds.length) return [];
   const rows = await db
     .select({
@@ -251,7 +246,7 @@ function seededRandom(seed: number) {
   };
 }
 
-function shuffle<T>(items: T[], random: () => number = Math.random) {
+export function shuffle<T>(items: T[], random: () => number = Math.random) {
   const result = [...items];
   for (let index = result.length - 1; index > 0; index -= 1) {
     const target = Math.floor(random() * (index + 1));
@@ -260,7 +255,7 @@ function shuffle<T>(items: T[], random: () => number = Math.random) {
   return result;
 }
 
-function shuffledOptions(
+export function shuffledOptions(
   stem: string,
   options: string[],
   random?: () => number,
@@ -440,16 +435,6 @@ async function scopeQuestionIds(scope: QuestionScope) {
     .where(eq(questionTags.tag, scope))
     .orderBy(asc(questions.id));
   return rows.map((row) => row.id);
-}
-
-function isAnswerCorrect(answer: string[], correctAnswers: string[]) {
-  const normalize = (items: string[]) => [...new Set(items)].sort();
-  const submitted = normalize(answer);
-  const expected = normalize(correctAnswers);
-  return (
-    submitted.length === expected.length &&
-    submitted.every((item, index) => item === expected[index])
-  );
 }
 
 function readAnswer(body: Record<string, unknown>) {
@@ -1092,6 +1077,7 @@ study.get("/dashboard", async (c) => {
       stableMastered: Number(reviewRow?.stableMastered ?? 0),
       wrongUnmastered: Number(reviewRow?.wrongUnmastered ?? 0),
     },
+    exam: examDashboard(userId),
     progress: {
       lastSkillGroup: progress?.lastSkillGroup ?? 1,
       lastSkillQuestionId: progress?.lastSkillQuestionId ?? null,
@@ -1172,6 +1158,49 @@ study.get("/search", async (c) => {
 
 study.get("/review", async (c) => {
   const userId = c.get("user").id;
+  if (c.req.query("source") === "exam") {
+    settleActiveExam(userId);
+    const status = c.req.query("status") ?? "pending";
+    const examFilter = c.req.query("exam") ?? "all";
+    const paperId = Number(examFilter);
+    if (!["pending", "all"].includes(status) ||
+      (examFilter !== "all" && (!Number.isInteger(paperId) || paperId < 1))) {
+      return c.json({ error: "复习筛选不正确" }, 400);
+    }
+    const rows = db.select({
+      questionId: examItems.questionId,
+      paperId: examItems.paperId,
+      correctedAt: examItems.correctedAt,
+    }).from(examItems).innerJoin(examPapers, eq(examPapers.id, examItems.paperId))
+      .where(and(eq(examPapers.userId, userId), eq(examItems.isCorrect, false)))
+      .orderBy(desc(examPapers.submittedAt), desc(examPapers.id), asc(examItems.position)).all();
+    const wrongById = new Map<number, { examIds: number[]; corrected: boolean }>();
+    const selectedIds = new Set<number>();
+    for (const row of rows) {
+      const meta = wrongById.get(row.questionId) ?? { examIds: [], corrected: true };
+      meta.examIds.push(row.paperId);
+      meta.corrected = meta.corrected && row.correctedAt !== null;
+      wrongById.set(row.questionId, meta);
+      if ((examFilter === "all" || row.paperId === paperId) &&
+        (status === "all" || row.correctedAt === null)) selectedIds.add(row.questionId);
+    }
+    const ids = [...selectedIds];
+    const views = await loadQuestionViews(userId, ids);
+    const solutions = ids.length ? db.select({
+      id: questions.id, correctAnswerJson: questions.correctAnswerJson, analysisText: questions.analysisText,
+    }).from(questions).where(inArray(questions.id, ids)).all() : [];
+    const byId = new Map(solutions.map((row) => [row.id, {
+      correctAnswers: parseStringArray(row.correctAnswerJson), analysisText: row.analysisText,
+    }]));
+    const result: ReviewResponse = {
+      dueCount: 0,
+      questions: views.map((view) => ({
+        ...view, history: null, pendingAttempt: undefined,
+        solution: byId.get(view.id), due: null, examWrong: wrongById.get(view.id)!,
+      })),
+    };
+    return c.json(result);
+  }
   const mode = c.req.query("mode");
   const scope = c.req.query("scope") as QuestionScope;
   const status = c.req.query("status") ?? "unmastered";

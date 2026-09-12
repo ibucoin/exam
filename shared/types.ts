@@ -111,8 +111,70 @@ export interface PrescriptionResponse {
   question: RoundQuestionView;
 }
 
+export interface ExamWrongMeta {
+  examIds: number[];
+  corrected: boolean;
+}
+
 export interface ReviewQuestionView extends QuestionView {
   due: number | null;
+  examWrong?: ExamWrongMeta;
+}
+
+export type ExamQuestionKind = Exclude<QuestionKind, "FillBlank">;
+
+export interface ExamKindBreakdown {
+  kind: ExamQuestionKind;
+  total: number;
+  correct: number;
+  wrong: number;
+  unanswered: number;
+  score: number;
+  fullScore: number;
+}
+
+export interface ExamSummary {
+  id: number;
+  status: "active" | "completed";
+  startedAt: number;
+  deadline: number;
+  submittedAt: number | null;
+  durationMs: number | null;
+  total: number;
+  answered: number;
+  correct: number;
+  wrong: number;
+  unanswered: number;
+  score: number;
+  fullScore: number;
+  accuracy: number;
+  breakdown: ExamKindBreakdown[];
+}
+
+export interface ExamQuestionView extends QuestionView {
+  position: number;
+  answer: string[];
+  isCorrect: boolean | null;
+  corrected: boolean;
+}
+
+export interface ExamCurrentResponse {
+  serverNow: number;
+  exam: ExamSummary | null;
+  questions: ExamQuestionView[];
+  autoSubmittedId: number | null;
+}
+
+export interface ExamResultResponse {
+  serverNow: number;
+  exam: ExamSummary;
+  questions: ExamQuestionView[];
+}
+
+export interface ExamListResponse {
+  exams: ExamSummary[];
+  stats: { count: number; best: number; recentAverage: number };
+  activeId: number | null;
 }
 
 export interface ReviewResponse {
@@ -154,6 +216,14 @@ export interface DashboardResponse {
     lastSkillGroup: number;
     lastSkillQuestionId: number | null;
     lastPrescriptionQuestionId: number | null;
+  };
+  exam: {
+    count: number;
+    best: number;
+    lastScore: number | null;
+    lastSubmittedAt: number | null;
+    activeId: number | null;
+    wrongPending: number;
   };
 }
 

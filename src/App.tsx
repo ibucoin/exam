@@ -7,6 +7,9 @@ import { Loading } from "./components/Loading";
 import { ApiRequestError, api } from "./lib/api";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { ExamPage } from "./pages/ExamPage";
+import { ExamResultPage } from "./pages/ExamResultPage";
+import { ExamsPage } from "./pages/ExamsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PasswordPage } from "./pages/PasswordPage";
 import { PrescriptionPage } from "./pages/PrescriptionPage";
@@ -46,6 +49,9 @@ export default function App() {
         <Route path="rounds/:id" element={<RoundArchivePage />} />
         <Route path="prescriptions" element={<PrescriptionPage />} />
         <Route path="prescriptions/:id" element={<PrescriptionPage />} />
+        <Route path="exams" element={<ExamsPage />} />
+        <Route path="exams/active" element={<ExamPage />} />
+        <Route path="exams/:id" element={<ExamResultPage />} />
         <Route path="review/:mode" element={<ReviewPage />} />
         <Route path="search" element={<SearchPage />} />
         <Route path="profile" element={<PasswordPage />} />

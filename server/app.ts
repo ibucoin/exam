@@ -3,6 +3,7 @@ import { serveStatic } from "hono/bun";
 import { secureHeaders } from "hono/secure-headers";
 import admin from "./routes/admin";
 import auth from "./routes/auth";
+import exam from "./routes/exam";
 import study from "./routes/study";
 import { ValidationError } from "./lib/validation";
 
@@ -18,6 +19,7 @@ app.use("/api/*", async (c, next) => {
 app.get("/api/health", (c) => c.json({ status: "ok" }));
 app.route("/api/auth", auth);
 app.route("/api/admin", admin);
+app.route("/api/exams", exam);
 app.route("/api", study);
 app.all("/api/*", (c) => c.json({ error: "接口不存在" }, 404));
 
