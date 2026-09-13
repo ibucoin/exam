@@ -8,6 +8,8 @@ import { EmptyState, Loading } from "../components/Loading";
 import { api, errorMessage } from "../lib/api";
 import { examDate, examDuration } from "../lib/exam";
 
+const kindLabels = { Radio: "单选", Checkbox: "多选", Judge: "判断" };
+
 export function ExamsPage() {
   const [confirming, setConfirming] = useState(false);
   const navigate = useNavigate();
@@ -30,7 +32,8 @@ export function ExamsPage() {
 
   if (exams.isPending) return <Loading label="正在整理考试记录" />;
   if (exams.isError) return <p className="page-error">{errorMessage(exams.error)}</p>;
-  const { stats, activeId } = exams.data;
+  const { stats, activeId, rule } = exams.data;
+  const composition = rule.kinds.map((row) => `${kindLabels[row.kind]} ${row.total}`).join("、");
 
   return (
     <div className="study-page exam-list-page">
@@ -49,7 +52,7 @@ export function ExamsPage() {
       <ConfirmDialog
         open={confirming}
         title="确认开始考试？"
-        description="20 分钟 100 题，开始后计时不会暂停，中途离开也会继续走表。"
+        description={`${rule.minutes} 分钟 ${rule.total} 题：${composition}，每题 ${rule.point} 分，满分 ${rule.fullScore} 分。开始后计时不会暂停，中途离开也会继续走表。`}
         confirmText="开始考试"
         onCancel={() => setConfirming(false)}
         onConfirm={() => {

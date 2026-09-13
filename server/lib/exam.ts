@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
-import type { DashboardResponse, ExamKindBreakdown, ExamSummary } from "../../shared/types";
+import type { DashboardResponse, ExamKindBreakdown, ExamRule, ExamSummary } from "../../shared/types";
 import { db } from "../db/client";
 import { examItems, examPapers, questions } from "../db/schema";
 import { isAnswerCorrect, parseStringArray } from "./answers";
@@ -13,8 +13,16 @@ export const EXAM_KINDS = [
   { kind: "Judge", total: 20 },
 ] as const;
 export const EXAM_POINT = 1;
+export const EXAM_MINUTES = 20;
 export const EXAM_TOTAL = EXAM_KINDS.reduce((sum, row) => sum + row.total, 0);
 export const EXAM_FULL_SCORE = EXAM_TOTAL * EXAM_POINT;
+export const EXAM_RULE: ExamRule = {
+  minutes: EXAM_MINUTES,
+  total: EXAM_TOTAL,
+  point: EXAM_POINT,
+  fullScore: EXAM_FULL_SCORE,
+  kinds: EXAM_KINDS.map(({ kind, total }) => ({ kind, total })),
+};
 
 function examPoint(total: number) {
   return total > 0 ? EXAM_FULL_SCORE / total : EXAM_POINT;

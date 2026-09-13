@@ -171,10 +171,19 @@ export interface ExamResultResponse {
   questions: ExamQuestionView[];
 }
 
+export interface ExamRule {
+  minutes: number;
+  total: number;
+  point: number;
+  fullScore: number;
+  kinds: { kind: ExamQuestionKind; total: number }[];
+}
+
 export interface ExamListResponse {
   exams: ExamSummary[];
   stats: { count: number; best: number; recentAverage: number };
   activeId: number | null;
+  rule: ExamRule;
 }
 
 export interface ReviewResponse {

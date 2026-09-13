@@ -9,7 +9,7 @@ import { examItems, examPapers, questions, questionTags } from "../db/schema";
 import { isAnswerCorrect, parseStringArray } from "../lib/answers";
 import { type AppEnv, requireAuth } from "../lib/auth";
 import {
-  completedExams, EXAM_KINDS, EXAM_TOTAL, type ExamPaper, examSummary, paperItems,
+  completedExams, EXAM_KINDS, EXAM_MINUTES, EXAM_RULE, EXAM_TOTAL, type ExamPaper, examSummary, paperItems,
   settleActiveExam, settleExam,
 } from "../lib/exam";
 import { readJsonBody } from "../lib/validation";
@@ -111,6 +111,7 @@ exam.get("/", (c) => {
       recentAverage: recent.length ? Math.round(recent.reduce((sum, paper) => sum + paper.score, 0) / recent.length * 10) / 10 : 0,
     },
     activeId: active?.id ?? null,
+    rule: EXAM_RULE,
   };
   return c.json(result);
 });
@@ -139,7 +140,7 @@ exam.post("/", async (c) => {
       if (selected.length !== EXAM_TOTAL) return { paper: null, autoSubmittedId: null };
       const startedAt = Date.now();
       const paper = tx.insert(examPapers).values({
-        userId, startedAt, deadline: startedAt + 20 * 60 * 1000, createdAt: startedAt,
+        userId, startedAt, deadline: startedAt + EXAM_MINUTES * 60 * 1000, createdAt: startedAt,
       }).returning().get();
       tx.insert(examItems).values(selected.map((question, index) => ({
         paperId: paper.id, position: index + 1, questionId: question.id, kind: question.kind,
