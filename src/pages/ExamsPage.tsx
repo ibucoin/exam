@@ -52,7 +52,7 @@ export function ExamsPage() {
       <ConfirmDialog
         open={confirming}
         title="确认开始考试？"
-        description={`${rule.minutes} 分钟 ${rule.total} 题：${composition}，每题 ${rule.point} 分，满分 ${rule.fullScore} 分。开始后计时不会暂停，中途离开也会继续走表。`}
+        description={`本次考试限时 ${rule.minutes} 分钟，共 ${rule.total} 题（${composition}），每题 ${rule.point} 分，满分 ${rule.fullScore} 分。开始后计时不会暂停，中途离开也会继续走表，时间到未交卷将自动交卷。`}
         confirmText="开始考试"
         onCancel={() => setConfirming(false)}
         onConfirm={() => {
