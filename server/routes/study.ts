@@ -630,6 +630,9 @@ study.post("/rounds/questions/:id/answer", async (c) => {
   if (!answer) {
     return c.json({ error: "答案格式不正确" }, 400);
   }
+  if (body.roundId !== undefined && (!Number.isSafeInteger(body.roundId) || Number(body.roundId) < 1)) {
+    return c.json({ error: "轮次不正确" }, 400);
+  }
   const row = await db
     .select({ question: questions, tag: questionTags.tag })
     .from(questions)
@@ -647,6 +650,9 @@ study.post("/rounds/questions/:id/answer", async (c) => {
 
   const userId = c.get("user").id;
   const round = ensureRound(userId, row.tag);
+  if (body.roundId !== undefined && body.roundId !== round.id) {
+    return c.json({ error: "轮次已变化，请刷新题组后重试" }, 409);
+  }
   if (round.status !== "active") {
     return c.json({ error: "本轮已完成，请先开启下一轮" }, 409);
   }

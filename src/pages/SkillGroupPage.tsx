@@ -68,10 +68,42 @@ function SkillGroupContent({ scope, bankPath, data }: {
   const group = data.group;
   const roundId = data.round.id;
   const queryKey = [bankPath, group];
-  const batchMutationKey = ["group-answers", bankPath, group, roundId];
+  const answerMutationKey = ["group-answers", bankPath, group, roundId];
+  const batchMutationKey = [...answerMutationKey, "batch"];
+  const submissionPending = useIsMutating({ mutationKey: answerMutationKey }) > 0;
   const batchPending = useIsMutating({ mutationKey: batchMutationKey }) > 0;
   const drafts = useRef<Record<number, string[]>>({});
+  const active = useRef(true);
   const [batchError, setBatchError] = useState<{ message: string; questionId?: number } | null>(null);
+  const singleSubmit = useMutation({
+    mutationKey: [...answerMutationKey, "single"],
+    mutationFn: async ({ questionId, answer }: { questionId: number; answer: string[] }) => {
+      await queryClient.cancelQueries({ queryKey, exact: true });
+      return api<AttemptResponse>(`/rounds/questions/${questionId}/answer`, {
+        method: "POST",
+        body: JSON.stringify({ roundId, answer }),
+      });
+    },
+    onSuccess: async (response, { questionId, answer }) => {
+      const cached = queryClient.getQueryData<SkillGroupResponse>(queryKey);
+      if (!cached || cached.round.id !== roundId) return;
+      await queryClient.cancelQueries({ queryKey, exact: true });
+      queryClient.setQueryData<SkillGroupResponse>(queryKey, (current) => {
+        if (!current || current.round.id !== roundId) return current;
+        return {
+          ...current,
+          questions: current.questions.map((question) => question.id !== questionId || question.roundAnswer ? question : {
+            ...question,
+            history: response.history,
+            solution: { correctAnswers: response.correctAnswers, analysisText: response.analysisText },
+            roundAnswer: { attemptId: response.attemptId, answer, isCorrect: response.isCorrect, answeredAt: Date.now() },
+          }),
+        };
+      });
+      delete drafts.current[questionId];
+      setBatchError((current) => !current?.questionId || current.questionId === questionId ? null : current);
+    },
+  });
   const batchSubmit = useMutation({
     mutationKey: batchMutationKey,
     mutationFn: async (answers: { questionId: number; answer: string[] }[]) => {
@@ -114,6 +146,11 @@ function SkillGroupContent({ scope, bankPath, data }: {
   });
 
   useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
+
+  useEffect(() => {
     const hash = window.location.hash.slice(1);
     const questionId = isTraining
       ? (data.questions.find((question) => `question-${question.id}` === hash) ?? data.questions[0])?.id
@@ -131,7 +168,7 @@ function SkillGroupContent({ scope, bankPath, data }: {
     saveProgress.mutate(id);
   };
   const submitGroup = () => {
-    if (queryClient.isMutating({ mutationKey: batchMutationKey })) return;
+    if (queryClient.isMutating({ mutationKey: answerMutationKey })) return;
     const current = queryClient.getQueryData<SkillGroupResponse>(queryKey);
     if (!current || current.round.id !== roundId) return;
     const pendingQuestions = current.questions.filter((question) => !question.roundAnswer);
@@ -224,8 +261,14 @@ function SkillGroupContent({ scope, bankPath, data }: {
             initialAnswer={question.roundAnswer?.answer ?? null}
             initialResult={toRoundResult(question)}
             allowRetry={false}
-            showSubmitButton={false}
-            submissionDisabled={batchPending}
+            submissionDisabled={submissionPending}
+            submitAnswer={async (answer) => {
+              if (queryClient.isMutating({ mutationKey: answerMutationKey })) {
+                throw new Error("正在提交答案，请稍后重试");
+              }
+              return singleSubmit.mutateAsync({ questionId: question.id, answer });
+            }}
+            onAnswered={(id) => { if (active.current) saveProgress.mutate(id); }}
             onAnswerChange={(id, answer) => {
               drafts.current[id] = answer;
               if (batchError?.questionId === id && answer[0]?.trim()) setBatchError(null);
@@ -242,7 +285,7 @@ function SkillGroupContent({ scope, bankPath, data }: {
         <button
           className="primary-button group-submit-button"
           type="button"
-          disabled={!pending || batchPending}
+          disabled={!pending || submissionPending}
           onClick={submitGroup}
         >
           <Send aria-hidden="true" />
