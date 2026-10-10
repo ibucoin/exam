@@ -60,7 +60,7 @@ export function SearchPage() {
           />
         </label>
         <select value={form.scope} onChange={(event) => update("scope", event.target.value as Filters["scope"])} aria-label="题库">
-          <option value="">全部题库</option><option value="技能">技能</option><option value="处方审核">处方审核</option>
+          <option value="">全部题库</option><option value="技能">技能</option><option value="处方审核">处方审核</option><option value="静配规范">静配规范</option>
         </select>
         <select value={form.kind} onChange={(event) => update("kind", event.target.value as Filters["kind"])} aria-label="题型">
           <option value="">全部题型</option><option value="Radio">单选题</option><option value="Checkbox">多选题</option><option value="Judge">判断题</option><option value="FillBlank">处方审核</option>
@@ -78,7 +78,9 @@ export function SearchPage() {
           <p className="result-count">找到 {search.data.total} 道题</p>
           <div className="search-results">
             {search.data.results.map((result) => {
-              const target = result.scope === "技能" ? `/skills/${result.group}#question-${result.id}` : `/prescriptions/${result.id}`;
+              const target = result.scope === "处方审核"
+                ? `/prescriptions/${result.id}`
+                : `/${result.scope === "静配规范" ? "training" : "skills"}/${result.group}#question-${result.id}`;
               return (
                 <Link className="search-result" to={target} key={`${result.scope}-${result.id}`}>
                   <div className="search-result-meta">

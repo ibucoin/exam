@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, ChevronLeft, ChevronRight, ClipboardCheck, History } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, ClipboardCheck, GraduationCap, History, TriangleAlert } from "lucide-react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import type {
   RoundArchiveResponse,
@@ -28,7 +28,7 @@ function ScopeRounds({ overview, icon: Icon }: { overview: RoundScopeOverview; i
       <div className="section-heading">
         <Icon aria-hidden="true" />
         <div>
-          <p className="eyebrow">{overview.scope === "技能" ? "技能题库" : "处方审核"}</p>
+          <p className="eyebrow">{overview.scope === "技能" ? "技能题库" : overview.scope}</p>
           <h2>轮次对比</h2>
         </div>
       </div>
@@ -60,9 +60,9 @@ function ScopeRounds({ overview, icon: Icon }: { overview: RoundScopeOverview; i
               <Link
                 className="search-result"
                 to={
-                  overview.scope === "技能"
-                    ? `/skills/${question.group ?? 1}#question-${question.id}`
-                    : `/prescriptions/${question.id}`
+                  overview.scope === "处方审核"
+                    ? `/prescriptions/${question.id}`
+                    : `/${overview.scope === "静配规范" ? "training" : "skills"}/${question.group ?? 1}#question-${question.id}`
                 }
                 key={question.id}
               >
@@ -98,6 +98,7 @@ export function RoundsPage() {
       </header>
       <ScopeRounds overview={overview.data.skill} icon={BookOpen} />
       <ScopeRounds overview={overview.data.prescription} icon={ClipboardCheck} />
+      <ScopeRounds overview={overview.data.training} icon={GraduationCap} />
     </div>
   );
 }
@@ -123,7 +124,7 @@ export function RoundArchivePage() {
       <header className="study-heading">
         <div>
           <p className="eyebrow">
-            {data.scope === "技能" ? "技能题库" : "处方审核"} · 轮次存档
+            {data.scope === "技能" ? "技能题库" : data.scope} · 轮次存档
           </p>
           <h1>第 {data.round.roundNo} 轮</h1>
           <p>
@@ -131,7 +132,10 @@ export function RoundArchivePage() {
             {data.round.answered} / {data.round.total} 题 · 正确率 {data.round.accuracy}%
           </p>
         </div>
-        <Link className="secondary-button" to="/rounds"><History />轮次历史</Link>
+        <div className="study-heading-actions">
+          <Link className="secondary-button" to={`/review/wrong?scope=${encodeURIComponent(data.scope)}`}><TriangleAlert />错题复习</Link>
+          <Link className="secondary-button" to="/rounds"><History />轮次历史</Link>
+        </div>
       </header>
       {answered.length === 0 && <EmptyState>本页题目在该轮尚未作答</EmptyState>}
       <section className="question-list">

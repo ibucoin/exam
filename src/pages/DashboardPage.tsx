@@ -5,6 +5,7 @@ import {
   BrainCircuit,
   ClipboardCheck,
   FileCheck2,
+  GraduationCap,
   Heart,
   History,
   Search,
@@ -36,7 +37,7 @@ function ScopePanel({
   round: RoundSummary;
   scope: QuestionScope;
   continueTo: string;
-  accent: "green" | "coral";
+  accent: "green" | "coral" | "amber";
 }) {
   const queryClient = useQueryClient();
   const startRound = useMutation({
@@ -48,6 +49,7 @@ function ScopePanel({
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["skills"] });
+      void queryClient.invalidateQueries({ queryKey: ["training"] });
       void queryClient.invalidateQueries({ queryKey: ["prescription"] });
       void queryClient.invalidateQueries({ queryKey: ["rounds"] });
     },
@@ -103,13 +105,16 @@ export function DashboardPage({ userId }: { userId: number }) {
   if (dashboard.isPending) return <Loading label="正在整理复习进度" />;
   if (dashboard.isError) return <p className="page-error">{errorMessage(dashboard.error)}</p>;
 
-  const { skill, prescription, skillRound, prescriptionRound, review, progress, exam } = dashboard.data;
+  const { skill, prescription, training, skillRound, prescriptionRound, trainingRound, review, progress, exam } = dashboard.data;
   const skillTarget = `/skills/${progress.lastSkillGroup}${
     progress.lastSkillQuestionId ? `#question-${progress.lastSkillQuestionId}` : ""
   }`;
   const prescriptionTarget = progress.lastPrescriptionQuestionId
     ? `/prescriptions/${progress.lastPrescriptionQuestionId}`
     : "/prescriptions";
+  const trainingTarget = `/training/${progress.lastTrainingGroup}${
+    progress.lastTrainingQuestionId ? `#question-${progress.lastTrainingQuestionId}` : ""
+  }`;
 
   return (
     <div className="dashboard-page">
@@ -137,6 +142,15 @@ export function DashboardPage({ userId }: { userId: number }) {
           scope="处方审核"
           continueTo={prescriptionTarget}
           accent="coral"
+        />
+        <ScopePanel
+          title="静配规范"
+          icon={GraduationCap}
+          stats={training}
+          round={trainingRound}
+          scope="静配规范"
+          continueTo={trainingTarget}
+          accent="amber"
         />
       </section>
       <section className="validation-panel" aria-label="每日复习">

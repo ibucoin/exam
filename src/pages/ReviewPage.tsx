@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, ChevronLeft, ChevronRight, Heart, HelpCircle, TriangleAlert } from "lucide-react";
-import { Navigate, useParams } from "react-router-dom";
+import { Navigate, useParams, useSearchParams } from "react-router-dom";
 import type {
   AttemptResponse,
   ExamListResponse,
@@ -16,7 +16,13 @@ import { examDate } from "../lib/exam";
 
 export function ReviewPage() {
   const { mode } = useParams();
-  const [scope, setScope] = useState<QuestionScope>("技能");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedScope = searchParams.get("scope");
+  const scope: QuestionScope = requestedScope === "处方审核" || requestedScope === "静配规范" ? requestedScope : "技能";
+  const setScope = (next: QuestionScope) => setSearchParams((current) => {
+    current.set("scope", next);
+    return current;
+  });
   const [status, setStatus] = useState("unmastered");
   const [roundFilter, setRoundFilter] = useState("all");
   const [source, setSource] = useState<"study" | "exam">("study");
@@ -31,7 +37,7 @@ export function ReviewPage() {
   const [page, setPage] = useState(1);
   const [snapshot, setSnapshot] = useState<{ dueCount: number; questions: ReviewQuestionView[] } | null>(null);
   const [ratings, setRatings] = useState<Record<number, "hard" | "good">>({});
-  const pageSize = isExamWrong || scope === "技能" ? 20 : 1;
+  const pageSize = isExamWrong || scope !== "处方审核" ? 20 : 1;
   const review = useQuery({
     queryKey: isExamWrong ? ["review", mode, "exam", examStatus, examFilter] : ["review", mode, scope, status, roundFilter],
     queryFn: () =>
@@ -80,7 +86,7 @@ export function ReviewPage() {
           <div><p className="eyebrow">专项复习</p><h1>{title}</h1></div>
         </div>
         {!isExamWrong && <div className="segmented-control" aria-label="选择题库">
-          {(["技能", "处方审核"] as const).map((item) => (
+          {(["技能", "处方审核", "静配规范"] as const).map((item) => (
             <button
               type="button"
               aria-pressed={scope === item}

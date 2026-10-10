@@ -1,6 +1,6 @@
 export type UserRole = "admin" | "user";
 export type QuestionKind = "Radio" | "Checkbox" | "Judge" | "FillBlank";
-export type QuestionScope = "技能" | "处方审核";
+export type QuestionScope = "技能" | "处方审核" | "静配规范";
 export type FsrsRating = "again" | "hard" | "good";
 
 export interface CurrentUser {
@@ -81,6 +81,7 @@ export interface RoundScopeOverview {
 export interface RoundsOverviewResponse {
   skill: RoundScopeOverview;
   prescription: RoundScopeOverview;
+  training: RoundScopeOverview;
 }
 
 export interface RoundArchiveResponse {
@@ -214,8 +215,10 @@ export interface ScopeStats {
 export interface DashboardResponse {
   skill: ScopeStats;
   prescription: ScopeStats;
+  training: ScopeStats;
   skillRound: RoundSummary;
   prescriptionRound: RoundSummary;
+  trainingRound: RoundSummary;
   review: {
     due: number;
     stableMastered: number;
@@ -225,6 +228,8 @@ export interface DashboardResponse {
     lastSkillGroup: number;
     lastSkillQuestionId: number | null;
     lastPrescriptionQuestionId: number | null;
+    lastTrainingGroup: number;
+    lastTrainingQuestionId: number | null;
   };
   exam: {
     count: number;

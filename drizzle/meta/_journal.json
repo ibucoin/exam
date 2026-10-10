@@ -50,6 +50,13 @@
       "when": 1789201056888,
       "tag": "0006_drop_duplicate_question_tag",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1789201056889,
+      "tag": "0007_training_question_bank",
+      "breakpoints": true
     }
   ]
 }

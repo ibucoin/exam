@@ -2,6 +2,7 @@ import {
   BookOpen,
   ClipboardCheck,
   FileCheck2,
+  GraduationCap,
   Heart,
   History,
   Home,
@@ -20,6 +21,7 @@ const mainNavigation = [
   { to: "/", label: "首页", icon: Home },
   { to: "/skills", label: "技能题", icon: BookOpen },
   { to: "/prescriptions", label: "处方审核", icon: ClipboardCheck },
+  { to: "/training", label: "静配规范", icon: GraduationCap },
   { to: "/exams", label: "考试", icon: FileCheck2 },
   { to: "/review/wrong", label: "错题", icon: TriangleAlert },
   { to: "/review/favorite", label: "收藏", icon: Heart },
@@ -46,7 +48,7 @@ export function AppShell({ user }: { user: CurrentUser }) {
         </NavLink>
         <nav className="desktop-nav" aria-label="主导航">
           {mainNavigation.map(({ to, label, icon: Icon }) => (
-            <NavLink key={to} to={to} end={to === "/"}>
+            <NavLink key={to} to={to} end={to === "/"} title={label} aria-label={label}>
               <Icon aria-hidden="true" />
               <span>{label}</span>
             </NavLink>
@@ -78,7 +80,7 @@ export function AppShell({ user }: { user: CurrentUser }) {
         <Outlet />
       </main>
       <nav className="mobile-nav" aria-label="移动端主导航">
-        {mainNavigation.filter(({ to }) => ["/", "/skills", "/prescriptions", "/exams", "/review/wrong"].includes(to)).map(({ to, label, icon: Icon }) => (
+        {mainNavigation.filter(({ to }) => ["/", "/skills", "/prescriptions", "/training", "/exams", "/review/wrong"].includes(to)).map(({ to, label, icon: Icon }) => (
           <NavLink key={to} to={to} end={to === "/"}>
             <Icon aria-hidden="true" />
             <span>{label}</span>

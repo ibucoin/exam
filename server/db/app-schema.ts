@@ -238,7 +238,7 @@ export const studyRounds = sqliteTable(
     userId: integer("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    scope: text("scope", { enum: ["技能", "处方审核"] }).notNull(),
+    scope: text("scope", { enum: ["技能", "处方审核", "静配规范"] }).notNull(),
     roundNo: integer("round_no").notNull(),
     status: text("status", { enum: ["active", "completed"] })
       .notNull()
@@ -330,5 +330,7 @@ export const userProgress = sqliteTable("user_progress", {
   lastSkillGroup: integer("last_skill_group").notNull().default(1),
   lastSkillQuestionId: integer("last_skill_question_id"),
   lastPrescriptionQuestionId: integer("last_prescription_question_id"),
+  lastTrainingGroup: integer("last_training_group").notNull().default(1),
+  lastTrainingQuestionId: integer("last_training_question_id"),
   updatedAt: integer("updated_at").notNull().default(now),
 });

@@ -28,6 +28,7 @@ const kindLabels = {
 function refreshStudyData(queryClient: ReturnType<typeof useQueryClient>) {
   void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
   void queryClient.invalidateQueries({ queryKey: ["skills"] });
+  void queryClient.invalidateQueries({ queryKey: ["training"] });
   void queryClient.invalidateQueries({ queryKey: ["rounds"] });
   void queryClient.invalidateQueries({ queryKey: ["prescription"] });
   void queryClient.invalidateQueries({ queryKey: ["review"] });
@@ -42,6 +43,9 @@ export function QuestionCard({
   initialAnswer,
   initialResult,
   submitAnswer,
+  onAnswerChange,
+  showSubmitButton = true,
+  submissionDisabled = false,
   allowRetry = true,
   hideNoteUntilAnswered = false,
   renderAnswer,
@@ -54,6 +58,9 @@ export function QuestionCard({
   initialAnswer?: string[] | null;
   initialResult?: AttemptResponse | null;
   submitAnswer?: (answer: string[]) => Promise<AttemptResponse>;
+  onAnswerChange?: (questionId: number, answer: string[]) => void;
+  showSubmitButton?: boolean;
+  submissionDisabled?: boolean;
   allowRetry?: boolean;
   hideNoteUntilAnswered?: boolean;
   renderAnswer?: () => ReactNode;
@@ -147,6 +154,7 @@ export function QuestionCard({
   const startAgain = () => {
     setSelected([]);
     setDraft("");
+    onAnswerChange?.(question.id, []);
     setResult(null);
     submit.reset();
     assess.reset();
@@ -186,7 +194,11 @@ export function QuestionCard({
           <span>你的审核意见</span>
           <textarea
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            disabled={submissionDisabled}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              onAnswerChange?.(question.id, [event.target.value.trim()]);
+            }}
             placeholder="填写处方问题、分析依据和干预意见"
             rows={8}
           />
@@ -208,17 +220,15 @@ export function QuestionCard({
                   type={question.kind === "Checkbox" ? "checkbox" : "radio"}
                   name={`question-${question.id}`}
                   checked={checked}
-                  disabled={Boolean(result)}
+                  disabled={Boolean(result) || submissionDisabled}
                   onChange={() => {
-                    if (question.kind === "Checkbox") {
-                      setSelected((current) =>
-                        current.includes(option)
-                          ? current.filter((item) => item !== option)
-                          : [...current, option],
-                      );
-                    } else {
-                      setSelected([option]);
-                    }
+                    const next = question.kind === "Checkbox"
+                      ? selected.includes(option)
+                        ? selected.filter((item) => item !== option)
+                        : [...selected, option]
+                      : [option];
+                    setSelected(next);
+                    onAnswerChange?.(question.id, next);
                   }}
                 />
                 <span className="option-control" aria-hidden="true">
@@ -231,13 +241,16 @@ export function QuestionCard({
         </div>
       )}
 
-      {!result && (
+      {!result && showSubmitButton && (
         <div className="question-actions">
           <button
             className="primary-button"
             type="button"
-            disabled={!answer[0] || submit.isPending}
-            onClick={() => submit.mutate(answer)}
+            disabled={!answer[0] || submit.isPending || submissionDisabled}
+            onClick={() => {
+              if (submissionDisabled || submit.isPending || !answer[0]) return;
+              submit.mutate(answer);
+            }}
           >
             <Send aria-hidden="true" />
             {submit.isPending ? "提交中..." : "提交答案"}

@@ -55,7 +55,7 @@ import { FSRS_STABLE_DAYS, Rating, scheduleQuestion } from "../lib/fsrs";
 import { readJsonBody } from "../lib/validation";
 
 const GROUP_SIZE = 20;
-const SCOPES = ["技能", "处方审核"] as const;
+const SCOPES = ["技能", "处方审核", "静配规范"] as const;
 const study = new Hono<AppEnv>();
 study.use("*", requireAuth);
 
@@ -268,7 +268,7 @@ export function shuffledOptions(
 }
 
 function isScope(value: unknown): value is QuestionScope {
-  return value === "技能" || value === "处方审核";
+  return value === "技能" || value === "处方审核" || value === "静配规范";
 }
 
 function completeRoundIfDone(
@@ -444,21 +444,10 @@ function readAnswer(body: Record<string, unknown>) {
   );
 }
 
-study.get("/skills/:group", async (c) => {
-  const group = Number(c.req.param("group"));
-  if (!Number.isInteger(group) || group < 1) {
-    return c.json({ error: "题组不存在" }, 404);
-  }
-  const ids = await scopeQuestionIds("技能");
+async function loadGroup(round: StudyRound, group: number, ids: number[]): Promise<SkillGroupResponse> {
   const totalGroups = Math.ceil(ids.length / GROUP_SIZE);
-  if (group > totalGroups) {
-    return c.json({ error: "题组不存在" }, 404);
-  }
-
-  const userId = c.get("user").id;
-  const round = ensureRound(userId, "技能");
   const pageIds = ids.slice((group - 1) * GROUP_SIZE, group * GROUP_SIZE);
-  const views = await loadQuestionViews(userId, pageIds);
+  const views = await loadQuestionViews(round.userId, pageIds);
   const answeredRows = await db
     .select({ questionId: roundAnswers.questionId })
     .from(roundAnswers)
@@ -469,7 +458,7 @@ study.get("/skills/:group", async (c) => {
       .slice(index * GROUP_SIZE, (index + 1) * GROUP_SIZE)
       .filter((id) => answeredSet.has(id)).length,
   );
-  const result: SkillGroupResponse = {
+  return {
     group,
     groupSize: GROUP_SIZE,
     totalGroups,
@@ -478,7 +467,132 @@ study.get("/skills/:group", async (c) => {
     groupAnswered,
     questions: await toRoundQuestions(round, views),
   };
-  return c.json(result);
+}
+
+function roundAnswerError(question: typeof questions.$inferSelect, answer: string[]) {
+  if (!answer.length || (question.kind !== "Checkbox" && answer.length !== 1)) {
+    return "请先完成作答";
+  }
+  const options = parseStringArray(question.optionsJson);
+  if (question.kind !== "FillBlank" && answer.some((item) => !options.includes(item))) {
+    return "答案不在可选项中";
+  }
+  return null;
+}
+
+function saveRoundAnswer(
+  tx: Transaction,
+  round: StudyRound,
+  question: typeof questions.$inferSelect,
+  answer: string[],
+  now: number,
+) {
+  const answerJson = JSON.stringify(answer);
+  const correctAnswers = parseStringArray(question.correctAnswerJson);
+  const isCorrect = question.kind === "FillBlank" ? null : isAnswerCorrect(answer, correctAnswers);
+  const attempt = tx.insert(attempts).values({
+    userId: round.userId,
+    questionId: question.id,
+    answerJson,
+    isCorrect,
+    ...(isCorrect === null ? {} : { assessedAt: now }),
+  }).returning({ id: attempts.id }).get();
+  tx.insert(roundAnswers).values({
+    roundId: round.id,
+    questionId: question.id,
+    attemptId: attempt.id,
+    answerJson,
+    isCorrect,
+    answeredAt: now,
+  }).run();
+  if (isCorrect !== null) {
+    updateQuestionState(tx, round.userId, question.id, answerJson, isCorrect);
+  }
+  return { attemptId: attempt.id, isCorrect, correctAnswers };
+}
+
+study.get("/:bank{skills|training}/:group", async (c) => {
+  const scope = c.req.param("bank") === "training" ? "静配规范" : "技能";
+  const group = Number(c.req.param("group"));
+  if (!Number.isInteger(group) || group < 1) {
+    return c.json({ error: "题组不存在" }, 404);
+  }
+  const ids = await scopeQuestionIds(scope);
+  if (group > Math.ceil(ids.length / GROUP_SIZE)) {
+    return c.json({ error: "题组不存在" }, 404);
+  }
+  return c.json(await loadGroup(ensureRound(c.get("user").id, scope), group, ids));
+});
+
+study.post("/:bank{skills|training}/:group/answers", async (c) => {
+  const scope = c.req.param("bank") === "training" ? "静配规范" : "技能";
+  const group = Number(c.req.param("group"));
+  if (!Number.isInteger(group) || group < 1) {
+    return c.json({ error: "题组不存在" }, 404);
+  }
+  const ids = await scopeQuestionIds(scope);
+  if (group > Math.ceil(ids.length / GROUP_SIZE)) {
+    return c.json({ error: "题组不存在" }, 404);
+  }
+  const body = await readJsonBody(c.req.raw);
+  if (!Number.isSafeInteger(body.roundId) || Number(body.roundId) < 1 ||
+    !Array.isArray(body.answers) || body.answers.length > GROUP_SIZE) {
+    return c.json({ error: "题组答案格式不正确" }, 400);
+  }
+  const pageIds = ids.slice((group - 1) * GROUP_SIZE, group * GROUP_SIZE);
+  const answers = new Map<number, string[]>();
+  for (const value of body.answers as unknown[]) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return c.json({ error: "题组答案格式不正确" }, 400);
+    }
+    const item = value as Record<string, unknown>;
+    if (!Number.isSafeInteger(item.questionId) || !Array.isArray(item.answer)) {
+      return c.json({ error: "题组答案格式不正确" }, 400);
+    }
+    const questionId = Number(item.questionId);
+    const answer = readAnswer(item);
+    if (!answer || answer.length !== item.answer.length ||
+      !pageIds.includes(questionId) || answers.has(questionId)) {
+      return c.json({ error: "题组答案不正确，请刷新题组后重试" }, 400);
+    }
+    answers.set(questionId, answer);
+  }
+  const userId = c.get("user").id;
+  const outcome = db.transaction((tx): { error: string; status: 400 | 409 } | { round: StudyRound } => {
+    const round = tx.select().from(studyRounds)
+      .where(and(eq(studyRounds.userId, userId), eq(studyRounds.scope, scope)))
+      .orderBy(desc(studyRounds.roundNo)).limit(1).get();
+    if (!round || round.id !== body.roundId) {
+      return { error: "轮次已变化，请刷新题组后重试", status: 409 };
+    }
+    const saved = new Set(tx.select({ questionId: roundAnswers.questionId }).from(roundAnswers)
+      .where(and(eq(roundAnswers.roundId, round.id), inArray(roundAnswers.questionId, pageIds)))
+      .all().map((row) => row.questionId));
+    const pendingIds = pageIds.filter((id) => !saved.has(id));
+    if (pendingIds.length && round.status !== "active") {
+      return { error: "本轮已完成，请先开启下一轮", status: 409 };
+    }
+    const byId = new Map(tx.select().from(questions).where(inArray(questions.id, pageIds))
+      .all().map((question) => [question.id, question]));
+    const pending: { question: typeof questions.$inferSelect; answer: string[] }[] = [];
+    for (const id of pendingIds) {
+      const answer = answers.get(id);
+      const question = byId.get(id);
+      if (!answer) return { error: "本组仍有漏答题目，请先完成作答", status: 400 };
+      if (!question) return { error: "题目不存在", status: 400 };
+      const error = roundAnswerError(question, answer);
+      if (error) return { error, status: 400 };
+      pending.push({ question, answer });
+    }
+    if (pending.length) {
+      const now = Date.now();
+      for (const item of pending) saveRoundAnswer(tx, round, item.question, item.answer, now);
+      completeRoundIfDone(tx, round.id, scope, now);
+    }
+    return { round: tx.select().from(studyRounds).where(eq(studyRounds.id, round.id)).get()! };
+  });
+  if ("error" in outcome) return c.json({ error: outcome.error }, outcome.status);
+  return c.json(await loadGroup(outcome.round, group, ids));
 });
 
 study.get("/prescriptions/:id?", async (c) => {
@@ -528,13 +642,8 @@ study.post("/rounds/questions/:id/answer", async (c) => {
     return c.json({ error: "题目不存在" }, 404);
   }
   const question = row.question;
-  if (!answer.length || (question.kind !== "Checkbox" && answer.length !== 1)) {
-    return c.json({ error: "请先完成作答" }, 400);
-  }
-  const options = parseStringArray(question.optionsJson);
-  if (question.kind !== "FillBlank" && answer.some((item) => !options.includes(item))) {
-    return c.json({ error: "答案不在可选项中" }, 400);
-  }
+  const error = roundAnswerError(question, answer);
+  if (error) return c.json({ error }, 400);
 
   const userId = c.get("user").id;
   const round = ensureRound(userId, row.tag);
@@ -542,15 +651,7 @@ study.post("/rounds/questions/:id/answer", async (c) => {
     return c.json({ error: "本轮已完成，请先开启下一轮" }, 409);
   }
 
-  const answerJson = JSON.stringify(answer);
-  const correctAnswers = parseStringArray(question.correctAnswerJson);
-  const isCorrect =
-    question.kind === "FillBlank"
-      ? null
-      : isAnswerCorrect(answer, correctAnswers);
-  let attemptId = 0;
-  let duplicate = false;
-  db.transaction((tx) => {
+  const saved = db.transaction((tx) => {
     const existing = tx
       .select({ questionId: roundAnswers.questionId })
       .from(roundAnswers)
@@ -561,46 +662,20 @@ study.post("/rounds/questions/:id/answer", async (c) => {
         ),
       )
       .get();
-    if (existing) {
-      duplicate = true;
-      return;
-    }
+    if (existing) return null;
     const now = Date.now();
-    const attempt = tx
-      .insert(attempts)
-      .values({
-        userId,
-        questionId,
-        answerJson,
-        isCorrect,
-        ...(isCorrect === null ? {} : { assessedAt: now }),
-      })
-      .returning({ id: attempts.id })
-      .get();
-    attemptId = attempt.id;
-    tx.insert(roundAnswers)
-      .values({
-        roundId: round.id,
-        questionId,
-        attemptId,
-        answerJson,
-        isCorrect,
-        answeredAt: now,
-      })
-      .run();
-    if (isCorrect !== null) {
-      updateQuestionState(tx, userId, questionId, answerJson, isCorrect);
+    const result = saveRoundAnswer(tx, round, question, answer, now);
+    if (result.isCorrect !== null) {
       completeRoundIfDone(tx, round.id, round.scope, now);
     }
+    return result;
   });
-  if (duplicate) {
+  if (!saved) {
     return c.json({ error: "本轮该题已经作答" }, 409);
   }
   const result: AttemptResponse = {
-    attemptId,
-    isCorrect,
+    ...saved,
     history: await getHistory(userId, questionId),
-    correctAnswers,
     analysisText: question.analysisText,
   };
   return c.json(result, 201);
@@ -668,7 +743,7 @@ async function scopeRoundsOverview(
     .map(([questionId]) => questionId);
   let repeatedWrong: RepeatedWrongQuestion[] = [];
   if (repeatedIds.length) {
-    const scopeIds = scope === "技能" ? await scopeQuestionIds(scope) : [];
+    const scopeIds = scope !== "处方审核" ? await scopeQuestionIds(scope) : [];
     const questionRows = await db
       .select({ id: questions.id, kind: questions.kind, stem: questions.stem })
       .from(questions)
@@ -695,6 +770,7 @@ study.get("/rounds/overview", async (c) => {
   const result: RoundsOverviewResponse = {
     skill: await scopeRoundsOverview(userId, "技能"),
     prescription: await scopeRoundsOverview(userId, "处方审核"),
+    training: await scopeRoundsOverview(userId, "静配规范"),
   };
   return c.json(result);
 });
@@ -994,6 +1070,27 @@ study.patch("/progress", async (c) => {
   if (body.lastPrescriptionQuestionId !== undefined) {
     updates.lastPrescriptionQuestionId = Number(body.lastPrescriptionQuestionId) || null;
   }
+  if (body.lastTrainingGroup !== undefined) {
+    if (!Number.isInteger(body.lastTrainingGroup) || Number(body.lastTrainingGroup) < 1 || Number(body.lastTrainingGroup) > 20) {
+      return c.json({ error: "静配规范题组不正确" }, 400);
+    }
+    updates.lastTrainingGroup = Number(body.lastTrainingGroup);
+  }
+  if (body.lastTrainingQuestionId !== undefined) {
+    if (body.lastTrainingQuestionId === null) {
+      updates.lastTrainingQuestionId = null;
+    } else {
+      if (!Number.isInteger(body.lastTrainingQuestionId)) {
+        return c.json({ error: "静配规范题目不正确" }, 400);
+      }
+      const questionId = Number(body.lastTrainingQuestionId);
+      const tagged = await db.select({ id: questionTags.questionId }).from(questionTags)
+        .where(and(eq(questionTags.questionId, questionId), eq(questionTags.tag, "静配规范")))
+        .get();
+      if (!tagged) return c.json({ error: "静配规范题目不存在" }, 404);
+      updates.lastTrainingQuestionId = questionId;
+    }
+  }
   await db
     .insert(userProgress)
     .values({ userId: c.get("user").id, ...updates })
@@ -1070,8 +1167,10 @@ study.get("/dashboard", async (c) => {
   const result: DashboardResponse = {
     skill: await scopeStats(userId, "技能"),
     prescription: await scopeStats(userId, "处方审核"),
+    training: await scopeStats(userId, "静配规范"),
     skillRound: await roundSummary(ensureRound(userId, "技能")),
     prescriptionRound: await roundSummary(ensureRound(userId, "处方审核")),
+    trainingRound: await roundSummary(ensureRound(userId, "静配规范")),
     review: {
       due: Number(reviewRow?.due ?? 0),
       stableMastered: Number(reviewRow?.stableMastered ?? 0),
@@ -1082,6 +1181,8 @@ study.get("/dashboard", async (c) => {
       lastSkillGroup: progress?.lastSkillGroup ?? 1,
       lastSkillQuestionId: progress?.lastSkillQuestionId ?? null,
       lastPrescriptionQuestionId: progress?.lastPrescriptionQuestionId ?? null,
+      lastTrainingGroup: progress?.lastTrainingGroup ?? 1,
+      lastTrainingQuestionId: progress?.lastTrainingQuestionId ?? null,
     },
   };
   return c.json(result);
@@ -1095,9 +1196,9 @@ study.get("/search", async (c) => {
   const filter = c.req.query("filter") ?? "all";
   const page = Math.max(1, Number(c.req.query("page")) || 1);
   const pageSize = 30;
-  const conditions = [inArray(questionTags.tag, ["技能", "处方审核"] as const)];
+  const conditions = [inArray(questionTags.tag, SCOPES)];
   if (query) conditions.push(like(questions.stem, `%${query}%`));
-  if (scope === "技能" || scope === "处方审核") {
+  if (isScope(scope)) {
     conditions.push(eq(questionTags.tag, scope));
   }
   if (["Radio", "Checkbox", "Judge", "FillBlank"].includes(kind ?? "")) {
@@ -1119,8 +1220,8 @@ study.get("/search", async (c) => {
       attemptCount: questionStates.attemptCount,
       lastAnswerJson: questionStates.lastAnswerJson,
       total: sql<number>`COUNT(*) OVER ()`,
-      group: sql<number | null>`CASE WHEN ${questionTags.tag} = '技能' THEN
-        CAST(((SELECT COUNT(*) FROM questions q2 INNER JOIN question_tags qt2 ON qt2.question_id = q2.id WHERE qt2.tag = '技能' AND q2.id <= ${questions.id}) - 1) / ${GROUP_SIZE} AS INTEGER) + 1
+      group: sql<number | null>`CASE WHEN ${questionTags.tag} IN ('技能', '静配规范') THEN
+        CAST(((SELECT COUNT(*) FROM questions q2 INNER JOIN question_tags qt2 ON qt2.question_id = q2.id WHERE qt2.tag = ${questionTags.tag} AND q2.id <= ${questions.id}) - 1) / ${GROUP_SIZE} AS INTEGER) + 1
         ELSE NULL END`,
     })
     .from(questions)

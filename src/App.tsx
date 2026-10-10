@@ -45,6 +45,8 @@ export default function App() {
         <Route index element={<DashboardPage userId={currentUser.data.id} />} />
         <Route path="skills" element={<SkillRedirect userId={currentUser.data.id} />} />
         <Route path="skills/:group" element={<SkillGroupPage />} />
+        <Route path="training" element={<SkillRedirect userId={currentUser.data.id} scope="静配规范" />} />
+        <Route path="training/:group" element={<SkillGroupPage key="training" scope="静配规范" />} />
         <Route path="rounds" element={<RoundsPage />} />
         <Route path="rounds/:id" element={<RoundArchivePage />} />
         <Route path="prescriptions" element={<PrescriptionPage />} />

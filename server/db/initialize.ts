@@ -10,7 +10,7 @@ export async function initializeDatabase() {
   if (!questionCount[0]?.total) {
     throw new Error("题库为空，请确认 DATABASE_PATH 指向 questions.sqlite3");
   }
-  for (const scope of ["技能", "处方审核"] as const) {
+  for (const scope of ["技能", "处方审核", "静配规范"] as const) {
     const result = await db
       .select({ total: count() })
       .from(questionTags)
